@@ -1,0 +1,4 @@
+rotors=I II III
+positions=ABC
+reflector=B
+PZUBMUUTLUDSFOXGSMLIPALHKWNXZVGFXST

@@ -1,0 +1,8 @@
+flag = open('flag.txt','rb').read().strip()
+m = int.from_bytes(flag, 'big')
+c1 = pow(m, 3, n)
+c2 = pow(m + 1, 3, n)
+print('n =', n)
+print('c1 =', c1)
+print('c2 =', c2)
+print('diff = 1')

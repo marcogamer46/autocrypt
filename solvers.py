@@ -1,0 +1,2654 @@
+"""Built-in encodings, classical ciphers, XOR, RSA, and hash/JWT solvers."""
+from __future__ import annotations
+
+import base64
+import binascii
+import bisect
+import collections
+import gzip
+import hashlib
+import hmac
+import itertools
+import json
+import math
+import multiprocessing as mp
+import os
+import random
+import re
+import string
+import time
+import urllib.parse
+import zlib
+
+from core import solver
+from scoring import (assess, quadgram_score, quadgram_log, word_initial_log,
+                     word_final_log, WORDS, _COMMON, flag_plausibility,
+                     english_confidence, leet_body_dict_fraction, plain_text_score)
+
+try:  # optional acceleration/provider
+    import gmpy2
+except ImportError:
+    gmpy2 = None
+try:
+    from Crypto.Util.number import inverse as _crypto_inverse
+except ImportError:
+    _crypto_inverse = None
+try:
+    import numpy as _np
+except ImportError:
+    _np = None
+try:
+    import bcrypt as _bcrypt
+except ImportError:
+    _bcrypt = None
+
+
+def _prior(fp, *names, default=0.0):
+    return max((fp.get("prior_map", {}).get(n, 0.0) for n in names), default=default)
+
+
+def _text_prior(fp):
+    if fp["charset"] != "ascii-text" or fp["length"] < 3 or fp["length"] > 10_000:
+        return 0.0
+    if fp["ic"] > .16:
+        return 0.0
+    if fp["entropy"] > 6.2:
+        return 0.12
+    return .57
+
+
+def _xor_prior(fp):
+    if not 0 < fp["length"] <= 100_000:
+        return 0.0
+    if fp["charset"] == "ascii-text" and fp["entropy"] < 4.3:
+        return 0.0
+    return .72
+
+
+def _repeat_xor_prior(fp):
+    if not 12 <= fp["length"] <= 100_000:
+        return 0.0
+    if fp["charset"] == "ascii-text":
+        # Text-like blobs (English, reversed text, etc.) keep their letter
+        # frequencies (IC around 0.06+); XOR ciphertext over printable bytes is
+        # close to uniform (IC well below 0.05). Only the latter is worth
+        # cracking as repeating-key XOR.
+        if fp["ic"] >= 0.055 or fp["entropy"] < 4.2:
+            return 0.0
+    # Encoded blobs (base64/hex/...) are decoder territory; treating them as
+    # XOR ciphertext wastes the search budget on encoding look-alikes. The
+    # decoded child blob is still eligible. Exception: small encoded blobs
+    # (<=64 B) are cheap to consider and cover short XOR-over-hex flags.
+    if fp.get("classes") and fp["length"] > 64:
+        enc = {"hex", "base64", "base64url", "base32", "binary", "octal",
+               "decimal", "morse", "url", "quoted-printable"}
+        if enc.intersection(fp["classes"]):
+            return 0.0
+    return .64
+
+
+def _emit(ctx, plain, method, params=None):
+    params = params or {}
+    score, _ = assess(plain)
+    yield plain, method, params, score
+
+
+@solver("base16", lambda fp: _prior(fp, "hex"))
+def solve_hex(data, ctx):
+    try:
+        txt = data.decode("ascii").strip()
+    except UnicodeError:
+        return
+    try:
+        out = bytes.fromhex(txt)
+        if out:
+            yield from _emit(ctx, out, "hex")
+            return
+    except (ValueError, UnicodeError):
+        pass
+    # Separator-tolerant form: whitespace / , : ; / 0x-prefixed hex tokens.
+    toks = []
+    for t in re.split(r"[\s,:;]+", txt):
+        t = t.strip().lower()
+        if t.startswith("0x"):
+            t = t[2:]
+        if t and re.fullmatch(r"[0-9a-f]{1,2}", t):
+            toks.append(t)
+    if len(toks) >= 8 and len(toks) % 2 == 0:
+        try:
+            out = bytes.fromhex("".join(toks))
+            if out:
+                yield from _emit(ctx, out, "hex")
+        except ValueError:
+            return
+
+
+@solver("hex-in-text", lambda fp: .45 if fp["charset"] == "ascii-text" and re.search(
+    r"(?<![0-9a-fA-F])[0-9a-fA-F]{16,}", fp.get("_text", "")) else 0.0)
+def solve_hex_in_text(data, ctx):
+    """Decode long hex-looking runs embedded in surrounding prose (e.g.
+    'The value is 6163...7d here.'). Only yields when the decoded bytes are
+    printable text, and only for runs whose decoded form looks flag-like or
+    English-ish."""
+    try:
+        text = data.decode("ascii")
+    except UnicodeDecodeError:
+        return
+    seen = set()
+    for m in re.finditer(r"(?<![0-9a-fA-F])([0-9a-fA-F]{16,})(?![0-9a-fA-F])", text):
+        tok = m.group(1)
+        if len(tok) % 2:
+            continue
+        try:
+            out = bytes.fromhex(tok)
+        except ValueError:
+            continue
+        if out in seen:
+            continue
+        seen.add(out)
+        pr = sum(32 <= b < 127 or b in (9, 10, 13) for b in out) / len(out)
+        if pr >= 0.9:
+            yield out, "hex-in-text", {"start": m.start()}, assess(out)[0]
+
+
+@solver("base32", lambda fp: _prior(fp, "base32"))
+def solve_base32(data, ctx):
+    try:
+        raw = re.sub(rb"\s+", b"", data).upper()
+        out = base64.b32decode(raw + b"=" * ((-len(raw)) % 8))
+        if out:
+            yield from _emit(ctx, out, "base32")
+    except (binascii.Error, ValueError):
+        return
+
+
+@solver("base64", lambda fp: max(_prior(fp, "base64"), _prior(fp, "base64url")))
+def solve_base64(data, ctx):
+    raw = re.sub(rb"\s+", b"", data)
+    for url in (False, True):
+        try:
+            padded = raw + b"=" * ((-len(raw)) % 4)
+            out = base64.urlsafe_b64decode(padded) if url else base64.b64decode(padded, validate=True)
+            if out and (url == (b"-" in raw or b"_" in raw) or not url):
+                yield from _emit(ctx, out, "base64url" if url else "base64")
+        except (binascii.Error, ValueError):
+            continue
+
+
+_B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+@solver("base58", lambda fp: _prior(fp, "base58/base62"))
+def solve_base58(data, ctx):
+    try:
+        s = data.decode("ascii").strip()
+        n = 0
+        for c in s:
+            n = n * 58 + _B58.index(c)
+        out = (b"\0" * (len(s) - len(s.lstrip("1"))) +
+               (n.to_bytes((n.bit_length() + 7) // 8, "big") if n else b""))
+        if out:
+            yield from _emit(ctx, out, "base58")
+    except (ValueError, UnicodeError):
+        return
+
+
+@solver("base85", lambda fp: _prior(fp, "base85"))
+def solve_base85(data, ctx):
+    raw = re.sub(rb"\s+", b"", data)
+    for name, fn in (("base85", base64.b85decode), ("ascii85", base64.a85decode)):
+        try:
+            out = base64.a85decode(raw, adobe=raw.startswith(b"<~")) if name == "ascii85" else fn(raw)
+            if out:
+                yield from _emit(ctx, out, name)
+        except (ValueError, binascii.Error):
+            continue
+
+
+@solver("url", lambda fp: _prior(fp, "url"))
+def solve_url(data, ctx):
+    try:
+        out = urllib.parse.unquote_to_bytes(data.decode("ascii").replace("+", " "))
+        if out != data:
+            yield from _emit(ctx, out, "url")
+    except UnicodeError:
+        return
+
+
+@solver("binary", lambda fp: _prior(fp, "binary"))
+def solve_binary(data, ctx):
+    try:
+        bits = re.sub(rb"\s+", b"", data).decode("ascii")
+        out = bytes(int(bits[i:i + 8], 2) for i in range(0, len(bits) - 7, 8))
+        if out:
+            yield from _emit(ctx, out, "binary")
+    except (ValueError, UnicodeError):
+        return
+
+
+@solver("octal", lambda fp: _prior(fp, "octal"))
+def solve_octal(data, ctx):
+    try:
+        nums = re.findall(rb"\d+", data)
+        out = bytes(int(n, 8) for n in nums if int(n, 8) <= 255)
+        if out and len(out) == len(nums):
+            yield from _emit(ctx, out, "octal")
+    except ValueError:
+        return
+
+
+@solver("decimal", lambda fp: _prior(fp, "decimal"))
+def solve_decimal(data, ctx):
+    try:
+        nums = re.findall(rb"\d+", data)
+        out = bytes(int(n) for n in nums)
+        if out and all(int(n) <= 255 for n in nums):
+            yield from _emit(ctx, out, "decimal bytes")
+    except (ValueError, OverflowError):
+        return
+
+
+_MORSE = {
+    ".-": "A", "-...": "B", "-.-.": "C", "-..": "D", ".": "E", "..-.": "F",
+    "--.": "G", "....": "H", "..": "I", ".---": "J", "-.-": "K", ".-..": "L",
+    "--": "M", "-.": "N", "---": "O", ".--.": "P", "--.-": "Q", ".-.": "R",
+    "...": "S", "-": "T", "..-": "U", "...-": "V", ".--": "W", "-..-": "X",
+    "-.--": "Y", "--..": "Z", "-----": "0", ".----": "1", "..---": "2",
+    "...--": "3", "....-": "4", ".....": "5", "-....": "6", "--...": "7",
+    "---..": "8", "----.": "9",
+}
+
+
+@solver("morse", lambda fp: _prior(fp, "morse"))
+def solve_morse(data, ctx):
+    try:
+        chunks = re.split(rb"\s{2,}|/", data.strip())
+        words = []
+        for chunk in chunks:
+            tokens = chunk.split()
+            words.append("".join(_MORSE[t.decode()] for t in tokens))
+        out = " ".join(words)
+        if out:
+            yield from _emit(ctx, out, "morse")
+    except (KeyError, UnicodeError):
+        return
+
+
+@solver("quoted-printable", lambda fp: _prior(fp, "quoted-printable"))
+def solve_qp(data, ctx):
+    if b"=" not in data:
+        return
+    try:
+        out = binascii.a2b_qp(data)
+        if out != data:
+            yield from _emit(ctx, out, "quoted-printable")
+    except binascii.Error:
+        return
+
+
+@solver("a1z26", lambda fp: _prior(fp, "a1z26/polybius"))
+def solve_a1z26(data, ctx):
+    nums = re.findall(rb"\d+", data)
+    try:
+        if nums and all(1 <= int(n) <= 26 for n in nums):
+            yield from _emit(ctx, "".join(chr(96 + int(n)) for n in nums), "A1Z26")
+    except ValueError:
+        return
+
+
+@solver("bacon", lambda fp: _prior(fp, "bacon"))
+def solve_bacon(data, ctx):
+    bits = re.sub(rb"[^aAbB]", b"", data).upper()
+    if len(bits) < 5:
+        return
+    table = "ABCDEFGHIKLMNOPQRSTUVWXYZ"
+    try:
+        out = "".join(table[int(bits[i:i + 5].replace(b"A", b"0").replace(b"B", b"1"), 2)]
+                      for i in range(0, len(bits) - 4, 5))
+        yield from _emit(ctx, out, "Bacon")
+    except (ValueError, IndexError):
+        return
+
+
+@solver("polybius", lambda fp: _prior(fp, "polybius", "a1z26/polybius"))
+def solve_polybius(data, ctx):
+    digits = re.sub(rb"\s+", b"", data)
+    if len(digits) < 4 or len(digits) % 2 or not re.fullmatch(rb"[1-5]+", digits):
+        return
+    try:
+        chars = []
+        for i in range(0, len(digits), 2):
+            r, c = int(digits[i:i + 1]), int(digits[i + 1:i + 2])
+            chars.append("ABCDEFGHIKLMNOPQRSTUVWXYZ"[(r - 1) * 5 + c - 1])
+        yield from _emit(ctx, "".join(chars), "Polybius")
+    except (ValueError, IndexError):
+        return
+
+
+@solver("PEM", lambda fp: _prior(fp, "pem"))
+def solve_pem(data, ctx):
+    try:
+        body = b"".join(line.strip() for line in data.splitlines()
+                        if line and not line.startswith(b"-----"))
+        out = base64.b64decode(body, validate=True)
+        if out:
+            yield from _emit(ctx, out, "PEM/base64")
+    except binascii.Error:
+        return
+
+
+@solver("zlib/gzip", lambda fp: max(_prior(fp, "gzip"), _prior(fp, "zlib")))
+def solve_compression(data, ctx):
+    try:
+        if data.startswith(b"\x1f\x8b"):
+            obj = zlib.decompressobj(16 + zlib.MAX_WBITS)
+            out = obj.decompress(data, 10_000_001)
+            if len(out) <= 10_000_000 and obj.eof:
+                yield from _emit(ctx, out, "gzip")
+        elif len(data) >= 2 and data[0] == 0x78:
+            obj = zlib.decompressobj()
+            out = obj.decompress(data, 10_000_001)
+            if len(out) <= 10_000_000 and obj.eof:
+                yield from _emit(ctx, out, "zlib")
+    except zlib.error:
+        return
+
+
+@solver("reverse", lambda fp: .35 if fp["charset"] == "ascii-text" and fp["length"] > 3 else 0)
+def solve_reverse(data, ctx):
+    try:
+        out = data.decode("utf-8")[::-1]
+        yield from _emit(ctx, out, "reverse text")
+    except UnicodeDecodeError:
+        return
+
+
+def _letter_shift(text, fn):
+    out = []
+    for c in text:
+        if "a" <= c <= "z":
+            out.append(chr((fn(ord(c) - 97) % 26) + 97))
+        elif "A" <= c <= "Z":
+            out.append(chr((fn(ord(c) - 65) % 26) + 65))
+        else:
+            out.append(c)
+    return "".join(out)
+
+
+def _rank_score(out):
+    """assess() for ordinary text; leetspeak-aware flag plausibility if flag-shaped."""
+    a = assess(out)[0]
+    f = flag_plausibility(out if isinstance(out, str) else out.decode("utf-8", "replace"))
+    return max(a, f) if f > 0 else a
+
+
+def _top_texts(text, variants, count=3):
+    ranked = sorted(((_rank_score(out), out, method, params) for out, method, params in variants),
+                    reverse=True, key=lambda x: x[0])
+    return ranked[:count]
+
+
+@solver("caesar", lambda fp: _text_prior(fp))
+def solve_caesar(data, ctx):
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return
+    if re.fullmatch(r"[0-9a-fA-F\s]+", text) and len(re.sub(r"\s", "", text)) >= 16:
+        # Pure hex/digest-looking blobs are not Caesar text; trying shifts here
+        # spawns combinatorial junk children (and starves real solvers).
+        return
+    variants = [(_letter_shift(text, lambda x, k=k: x - k), "caesar", {"shift": k})
+                for k in range(1, 26)]
+    if len(text) <= 200 and (any(not c.isalpha() for c in text) or any(c.islower() for c in text)):
+        ranked = sorted(((_rank_score(out), out, method, params) for out, method, params in variants),
+                        reverse=True, key=lambda x: x[0])
+        for i, (score, out, method, params) in enumerate(ranked):
+            if i == 0:
+                params["_relative_candidate"] = True
+            yield out, method, params, score
+    else:
+        for score, out, method, params in _top_texts(text, variants, 3):
+            yield out, method, params, score
+
+
+@solver("ROT13", lambda fp: _text_prior(fp))
+def solve_rot13(data, ctx):
+    try:
+        text = data.decode("utf-8")
+        yield from _emit(ctx, _letter_shift(text, lambda x: x - 13), "rot13")
+    except UnicodeDecodeError:
+        return
+
+
+@solver("ROT47", lambda fp: _text_prior(fp))
+def solve_rot47(data, ctx):
+    try:
+        text = data.decode("utf-8")
+        out = "".join(chr(33 + (ord(c) - 33 + 47) % 94) if 33 <= ord(c) <= 126 else c for c in text)
+        yield from _emit(ctx, out, "rot47")
+    except UnicodeDecodeError:
+        return
+
+
+@solver("atbash", lambda fp: _text_prior(fp))
+def solve_atbash(data, ctx):
+    try:
+        text = data.decode("utf-8")
+        out = _letter_shift(text, lambda x: 25 - x)
+        yield from _emit(ctx, out, "atbash")
+    except UnicodeDecodeError:
+        return
+
+
+@solver("affine", lambda fp: _text_prior(fp))
+def solve_affine(data, ctx):
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return
+    # Rank ALL 312 keys by the best of plain-English and flag-plausibility
+    # evidence (a short flag-shaped plaintext barely moves the quadgram
+    # score, so English-only ranking prunes the true key; conversely a
+    # flag-shaped junk row must not beat a fuller-evidence row). Yield the
+    # top 10; the core ranking then separates ties by leet-body evidence.
+    scored = []
+    seen = set()
+    _flagish_local = re.compile(r"[A-Za-z0-9_]{2,30}\{[^{}\s]{1,300}\}")
+    for a in (1, 3, 5, 7, 9, 11, 15, 17, 19, 21, 23, 25):
+        inv = pow(a, -1, 26)
+        for b in range(26):
+            out = _letter_shift(text, lambda x, inv=inv, b=b: inv * (x - b))
+            if out in seen:
+                continue
+            seen.add(out)
+            m = _flagish_local.search(out)
+            if m and (m.end() - m.start()) >= 0.9 * max(1, len(out)):
+                # Flag-shaped candidate: evidence = real leet-word coverage of
+                # the body (flag_plausibility is not word-aware and can rank
+                # junk above a dictionary-body flag).
+                sc = 0.9 + leet_body_dict_fraction(out)
+            else:
+                sc = max(assess(out)[0], flag_plausibility(out))
+            scored.append((sc, out, a, b))
+    scored.sort(key=lambda t: -t[0])
+    for i, (sc, out, a, b) in enumerate(scored[:10]):
+        yield out, "affine", {"a": a, "b": b}, sc
+
+
+@solver("vigenere-family", lambda fp: _text_prior(fp))
+def solve_vigenere(data, ctx):
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return
+    letters = [c.lower() for c in text if c.isalpha() and c.lower() in string.ascii_lowercase]
+    if len(letters) < 8:
+        return
+    vals = [ord(c) - 97 for c in letters]
+    maxlen = min(32, len(vals) // 3)
+    # Rank periods by the average within-column IC; still inspect a broad set
+    # to avoid discarding true periods on short or atypical English samples.
+    periods = []
+    for size in range(1, maxlen + 1):
+        col_ics = []
+        for col in range(size):
+            seq = vals[col::size]
+            n = len(seq)
+            freq = collections.Counter(seq)
+            col_ics.append(sum(v * (v - 1) for v in freq.values()) / max(1, n * (n - 1)))
+        avg = sum(col_ics) / len(col_ics)
+        periods.append((abs(avg - .066), size))
+    lens = [k for _, k in sorted(periods)[:min(24, len(periods))] if k * 10 <= len(vals)] or [1]
+    candidates = []
+    for mode in ("vigenere", "beaufort", "variant-beaufort"):
+        for keylen in lens:
+            key = []
+            for col in range(keylen):
+                seq = vals[col::keylen]
+                freq = collections.Counter(seq)
+                best = (float("inf"), 0)
+                for k in range(26):
+                    counts = [0] * 26
+                    for c, amount in freq.items():
+                        p = ((c - k) % 26 if mode == "vigenere"
+                             else (k - c) % 26 if mode == "beaufort"
+                             else (c + k) % 26)
+                        counts[p] += amount
+                    chi = sum((counts[i] - len(seq) * _EN_FREQ[i]) ** 2 /
+                              max(.0001, len(seq) * _EN_FREQ[i]) for i in range(26))
+                    if chi < best[0]:
+                        best = chi, k
+                key.append(best[1])
+            # Collapse repeated periods and prefer the shortest equivalent key.
+            actual = key
+            for size in range(1, len(key) + 1):
+                if len(key) % size == 0 and key == key[:size] * (len(key) // size):
+                    actual = key[:size]
+                    break
+            j = 0
+            out = []
+            for c in text:
+                if c.lower() in string.ascii_lowercase:
+                    x, k = ord(c.lower()) - 97, actual[j % len(actual)]
+                    p = (x - k) % 26 if mode == "vigenere" else (k - x) % 26 if mode == "beaufort" else (x + k) % 26
+                    out.append(chr(p + (65 if c.isupper() else 97)))
+                    j += 1
+                else:
+                    out.append(c)
+            plain = "".join(out)
+            score = _rank_score(plain) - .0015 * len(actual)
+            candidates.append((score, plain, mode, "".join(chr(65 + k) for k in actual)))
+    # A supplied wordlist can supply the key directly (short ciphertexts cannot
+    # be attacked statistically, but dictionary keys can be tried exhaustively).
+    _builtin = [w.encode() for w in (
+        "key secret password flag ctf crypto cipher lemon pass admin hello world test "
+        "cat dog abc abcd picoctf secure vigenere caesar encrypt decrypt python hacker "
+        "cyber security academy pico thm htb root toor letmein qwerty").split()]
+    for raw in _builtin + list(ctx.wordlist[:50_000]):
+        word = raw.decode("ascii", "ignore").strip().lower()
+        if not (2 <= len(word) <= 24) or not word.isalpha():
+            continue
+        if ctx.expired():
+            break
+        ks = [ord(c) - 97 for c in word]
+        for mode in ("vigenere", "beaufort"):
+            j, out = 0, []
+            for c in text:
+                if c.lower() in string.ascii_lowercase:
+                    x, k = ord(c.lower()) - 97, ks[j % len(ks)]
+                    p = (x - k) % 26 if mode == "vigenere" else (k - x) % 26
+                    out.append(chr(p + (65 if c.isupper() else 97)))
+                    j += 1
+                else:
+                    out.append(c)
+            plain = "".join(out)
+            candidates.append((_rank_score(plain) - .0005, plain, mode + "-wordlist", word.upper()))
+    for score, plain, mode, key in sorted(candidates, reverse=True)[:48]:
+        yield plain, mode, {"key": key}, score
+
+
+@solver("autokey", lambda fp: _text_prior(fp) if fp["length"] >= 16 else 0)
+def solve_autokey(data, ctx):
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return
+    vals = [ord(c.lower()) - 97 for c in text if c.lower() in string.ascii_lowercase]
+    if len(vals) < 12:
+        return
+    primers = []
+    if ctx.known_plaintext:
+        crib = [ord(c.lower()) - 97 for c in ctx.known_plaintext if c.lower() in string.ascii_lowercase]
+        if crib:
+            for size in range(1, min(32, len(crib)) + 1):
+                key = [(vals[i] - crib[i]) % 26 for i in range(min(size, len(crib)))]
+                if len(key) == size:
+                    primers.append(key)
+    primers.extend([[ord(c) - 97 for c in word] for word in
+                    ("KEY", "LEMON", "SECRET", "ORANGE", "CRYPTO")])
+    seen = set()
+    for key in primers:
+        if not key or tuple(key) in seen:
+            continue
+        seen.add(tuple(key))
+        plain_vals = []
+        for i, c in enumerate(vals):
+            k = key[i] if i < len(key) else plain_vals[i - len(key)]
+            plain_vals.append((c - k) % 26)
+        it = iter(plain_vals)
+        out = "".join(chr(next(it) + (65 if c.isupper() else 97))
+                      if c.lower() in string.ascii_lowercase else c for c in text)
+        if ctx.known_plaintext and ctx.known_plaintext.lower() not in out.lower():
+            continue
+        yield from _emit(ctx, out, "autokey", {"primer": "".join(chr(97 + k) for k in key)})
+
+
+_EN_FREQ = [.08167, .01492, .02782, .04253, .12702, .02228, .02015, .06094,
+            .06966, .00153, .00772, .04025, .02406, .06749, .07507, .01929,
+            .00095, .05987, .06327, .09056, .02758, .00978, .02360, .00150,
+            .01974, .00074]
+
+
+def _rail_decode(text, rails):
+    if rails <= 1:
+        return text
+    pattern = list(range(rails)) + list(range(rails - 2, 0, -1))
+    rail_ids = [pattern[i % len(pattern)] for i in range(len(text))]
+    counts = [rail_ids.count(r) for r in range(rails)]
+    pos, chunks = 0, []
+    for count in counts:
+        chunks.append(list(text[pos:pos + count]))
+        pos += count
+    idx = [0] * rails
+    out = []
+    for rail in rail_ids:
+        out.append(chunks[rail][idx[rail]])
+        idx[rail] += 1
+    return "".join(out)
+
+
+@solver("rail-fence", lambda fp: _text_prior(fp))
+def solve_rail(data, ctx):
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return
+    variants = [(_rail_decode(text, rails), "rail fence", {"rails": rails})
+                for rails in range(2, min(21, len(text)))]
+    # For flag-shaped inputs, order by leet-body dictionary evidence first
+    # (flag_plausibility saturates at 1.0 for junk), then by rank score. Keep
+    # more candidates than usual so the genuine rail survives to core ranking.
+    if "{" in text:
+        variants.sort(key=lambda v: (leet_body_dict_fraction(v[0]), _rank_score(v[0])),
+                      reverse=True)
+        chosen = variants[:8]
+    else:
+        chosen = [(out, method, params) for _, out, method, params in _top_texts(text, variants, 3)]
+    ranked = [(_rank_score(out), out, method, params) for out, method, params in chosen]
+    distinctive = len(ranked) > 1 and ranked[0][0] - ranked[1][0] >= .15
+    for i, (score, out, method, params) in enumerate(ranked):
+        if i == 0 and distinctive:
+            params["_relative_candidate"] = True
+        yield out, method, params, score
+
+
+@solver("scytale", lambda fp: _text_prior(fp))
+def solve_scytale(data, ctx):
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return
+    variants = []
+    for rows in range(2, min(20, len(text))):
+        cols = math.ceil(len(text) / rows)
+        out = "".join(text[r * cols + c] for c in range(cols) for r in range(rows)
+                      if r * cols + c < len(text))
+        variants.append((out, "scytale", {"rows": rows}))
+    for score, out, method, params in _top_texts(text, variants, 2):
+        yield out, method, params, score
+
+
+def _columnar_decrypt(text, order):
+    n, cols = len(text), len(order)
+    rows, extra = divmod(n, cols)
+    heights = [rows + (i < extra) for i in range(cols)]
+    columns = [""] * cols
+    pos = 0
+    for col in order:
+        h = heights[col]
+        columns[col] = text[pos:pos + h]
+        pos += h
+    return "".join(columns[c][r] for r in range(rows + 1) for c in range(cols)
+                   if r < len(columns[c]))
+
+
+def _column_worker(args):
+    text, seed, rounds = args
+    rng = random.Random(seed)
+    best = ("", -999.0)
+    for cols in range(2, min(13, len(text) // 8 + 1)):
+        order = list(range(cols))
+        rng.shuffle(order)
+        cur = _columnar_decrypt(text, order)
+        score = quadgram_score(cur)
+        temp = .45
+        for i in range(rounds):
+            a, b = rng.sample(range(cols), 2)
+            order[a], order[b] = order[b], order[a]
+            trial = _columnar_decrypt(text, order)
+            q = quadgram_score(trial)
+            if q > score or rng.random() < math.exp(min(0.0, (q - score) / temp)):
+                cur, score = trial, q
+            else:
+                order[a], order[b] = order[b], order[a]
+            temp = .45 * (1 - i / max(1, rounds)) + .015
+        if score > best[1]:
+            best = cur, score
+    return best
+
+
+def _parallel_map(worker, args, ctx):
+    if ctx.expired():
+        ctx.failures.append("Parallel solver skipped: time budget already expired.")
+        return []
+    import os as _os
+    if _os.environ.get("AUTOCRYPT_WORKER") == "1":
+        # inside a G1 worker process: never spawn nested pools
+        try:
+            return [worker(arg) for arg in args]
+        except Exception as exc:
+            ctx.failures.append(f"Parallel solver failed: {type(exc).__name__}: {exc}")
+            return []
+    if len(args) <= 1:
+        try:
+            return [worker(arg) for arg in args]
+        except Exception as exc:
+            ctx.failures.append(f"Parallel solver failed: {type(exc).__name__}: {exc}")
+            return []
+    pool = None
+    try:
+        method = "fork" if "fork" in mp.get_all_start_methods() else "spawn"
+        pool = mp.get_context(method).Pool(min(2, len(args)))
+        result = pool.map_async(worker, args)
+        out = result.get(timeout=ctx.deadline - time.monotonic())
+        pool.close()
+        return out
+    except KeyboardInterrupt:
+        if pool is not None:
+            pool.terminate()
+        raise
+    except Exception as exc:
+        ctx.failures.append(f"Parallel solver failed or reached the global time budget: {type(exc).__name__}: {exc}")
+        if pool is not None:
+            pool.terminate()
+        return []
+    finally:
+        if pool is not None:
+            pool.join()
+
+
+@solver("columnar-transposition", lambda fp: _text_prior(fp) if fp["length"] >= 24 else 0)
+def solve_columnar(data, ctx):
+    if len(data) > 10_000 or ctx.depth > 1:
+        return
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return
+    rounds = 900 if len(text) > 150 else 300
+    vals = _parallel_map(_column_worker, [(text, seed, rounds) for seed in (19, 73)], ctx)
+    for out, q in vals:
+        if out:
+            score = assess(out)[0]
+            yield out, "columnar transposition", {"hillclimb": True}, score
+
+
+def _substitute(text, key):
+    out = []
+    for c in text:
+        lo = c.lower()
+        if lo in string.ascii_lowercase:
+            v = key[ord(lo) - 97]
+            out.append(chr(v + (65 if c.isupper() else 97)))
+        else:
+            out.append(c)
+    return "".join(out)
+
+
+_SUB_WORDS = WORDS
+
+
+def _sub_worker(args):
+    text, seed, deadline = args
+    rng = random.Random(seed)
+    freq = collections.Counter(c.lower() for c in text if c.lower() in string.ascii_lowercase)
+    order = [ord(c) - 97 for c, _ in freq.most_common()]
+    order += [i for i in range(26) if i not in order]
+    target = "etaoinshrdlcumwfgypbvkjxqz"
+    base_key = [0] * 26
+    for ci, pi in zip(order, map(ord, target)):
+        base_key[ci] = pi - 97
+    cipher = [ord(c.lower()) - 97 for c in text if c.lower() in string.ascii_lowercase]
+    positions = [[] for _ in range(26)]
+    for pos, value in enumerate(cipher):
+        positions[value].append(pos)
+    if len(cipher) < 4:
+        return _substitute(text, base_key), quadgram_score(text)
+
+    word_tokens = [tuple(ord(c.lower()) - 97 for c in w)
+                   for w in re.findall(r"[A-Za-z]+", text)]
+    words_by_char = [[] for _ in range(26)]
+    for wi, word in enumerate(word_tokens):
+        for c in set(word):
+            words_by_char[c].append(wi)
+
+    def word_hit(key, wi):
+        return "".join(chr(key[c] + 97) for c in word_tokens[wi]) in _SUB_WORDS
+
+    def word_edge_score(key, wi):
+        word = "".join(chr(key[c] + 97) for c in word_tokens[wi])
+        return (5.0 * word_initial_log(word[0]) + 3.0 * word_final_log(word[-1])
+                if word else 0.0)
+
+    def q_at(values, start):
+        return quadgram_log("".join(chr(values[j] + 97) for j in range(start, start + 4)))
+
+    best_key, best_total = base_key[:], -float("inf")
+    restart = 0
+    stagnant_restarts = 0
+    rounds = 2500 if len(cipher) < 250 else 4000
+    while stagnant_restarts < 3 and time.monotonic() < deadline - .8:
+        before_restart = best_total
+        key = base_key[:]
+        if restart:
+            for _ in range(min(26, 5 + restart * 3)):
+                a, b = rng.sample(range(26), 2)
+                key[a], key[b] = key[b], key[a]
+        plain = [key[c] for c in cipher]
+        qsum = sum(q_at(plain, i) for i in range(len(plain) - 3))
+        hits = sum(word_hit(key, wi) for wi in range(len(word_tokens)))
+        edge_score = sum(word_edge_score(key, wi) for wi in range(len(word_tokens)))
+        for i in range(rounds):
+            if i % 64 == 0 and time.monotonic() >= deadline - .8:
+                break
+            a, b = rng.sample(range(26), 2)
+            affected_words = set(words_by_char[a]) | set(words_by_char[b])
+            old_hits = sum(word_hit(key, wi) for wi in affected_words)
+            old_edges = sum(word_edge_score(key, wi) for wi in affected_words)
+            key[a], key[b] = key[b], key[a]
+            affected = set()
+            for pos in positions[a]:
+                affected.update(range(max(0, pos - 3), min(len(plain) - 3, pos + 1)))
+            for pos in positions[b]:
+                affected.update(range(max(0, pos - 3), min(len(plain) - 3, pos + 1)))
+            old = sum(q_at(plain, start) for start in affected)
+            for pos in positions[a]:
+                plain[pos] = key[a]
+            for pos in positions[b]:
+                plain[pos] = key[b]
+            new = sum(q_at(plain, start) for start in affected)
+            new_hits = sum(word_hit(key, wi) for wi in affected_words)
+            new_edges = sum(word_edge_score(key, wi) for wi in affected_words)
+            trial_qsum = qsum - old + new
+            trial_hits = hits - old_hits + new_hits
+            trial_edges = edge_score - old_edges + new_edges
+            current_total = qsum + 2.2 * hits + edge_score
+            trial_total = trial_qsum + 2.2 * trial_hits + trial_edges
+            temp = 2.2 * (1 - i / max(1, rounds)) + .12
+            if trial_total > current_total or rng.random() < math.exp(
+                    min(0.0, (trial_total - current_total) / temp)):
+                qsum, hits, edge_score = trial_qsum, trial_hits, trial_edges
+            else:
+                key[a], key[b] = key[b], key[a]
+                for pos in positions[a]:
+                    plain[pos] = key[a]
+                for pos in positions[b]:
+                    plain[pos] = key[b]
+            total = qsum + 2.2 * hits + edge_score
+            if total > best_total:
+                best_total, best_key = total, key[:]
+        if best_total > before_restart + .25:
+            stagnant_restarts = 0
+        else:
+            stagnant_restarts += 1
+        restart += 1
+
+    # A deterministic local polish removes the last one- or two-letter
+    # mapping errors that annealing can leave behind.
+    def polish_score(key):
+        candidate = _substitute(text, key)
+        letters = [ord(c.lower()) - 97 for c in candidate
+                   if c.lower() in string.ascii_lowercase]
+        q = sum(quadgram_log("".join(chr(letters[i + j] + 97) for j in range(4)))
+                for i in range(len(letters) - 3))
+        hits_now = sum(
+            "".join(chr(key[c] + 97) for c in word) in _SUB_WORDS
+            for word in word_tokens
+        )
+        return q + 2.2 * hits_now
+
+    polish_total = polish_score(best_key)
+    while time.monotonic() < deadline - .1:
+        improved = False
+        for a, b in itertools.combinations(range(26), 2):
+            if time.monotonic() >= deadline - .1:
+                break
+            best_key[a], best_key[b] = best_key[b], best_key[a]
+            trial_total = polish_score(best_key)
+            if trial_total > polish_total + 1e-7:
+                polish_total = trial_total
+                improved = True
+            else:
+                best_key[a], best_key[b] = best_key[b], best_key[a]
+        if not improved:
+            break
+    out = _substitute(text, best_key)
+    return out, quadgram_score(out)
+
+
+@solver("monoalphabetic-substitution",
+        lambda fp: min(.99, _text_prior(fp) + .15)
+        if fp["length"] >= 35 and fp["ic"] >= .05 else 0)
+def solve_substitution(data, ctx):
+    if len(data) > 10_000 or ctx.depth > 1:
+        return
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return
+    # Seeds 112/887 both converge to the same wrong plateau on some texts
+    # (e.g. the matrix's E substitution case). Run several seeds so at least
+    # one annealing walk reaches the exact key; identical outputs collapse in
+    # core's result dict, so extra seeds are cheap.
+    vals = _parallel_map(_sub_worker, [(text, seed, ctx.deadline)
+                                       for seed in (1, 7, 13, 19)], ctx)
+    outputs = [(out, q) for out, q in vals if out]
+    if not outputs:
+        return
+    # The most-English result is the credible recovery: boost it exactly like
+    # the other classical solvers (0.55 + 0.35·ec) so a converged English
+    # plaintext survives the keep threshold and outranks weaker candidates.
+    outputs.sort(key=lambda t: -english_confidence(t[0]))
+    for i, (out, q) in enumerate(outputs):
+        params = {"hillclimb": True}
+        if i == 0:
+            ec = english_confidence(out)
+            if ec >= 0.5:
+                params["_statistical"] = True
+                yield out, "monoalphabetic substitution", params, min(0.95, 0.55 + 0.35 * ec)
+                continue
+        yield out, "monoalphabetic substitution", params, assess(out)[0]
+
+
+def _playfair_decrypt(text, square):
+    clean = [c for c in text.upper() if c in string.ascii_uppercase]
+    clean = ["I" if c == "J" else c for c in clean]
+    if len(clean) % 2:
+        clean = clean[:-1]
+    pos = {c: divmod(i, 5) for i, c in enumerate(square)}
+    out = []
+    for a, b in zip(clean[::2], clean[1::2]):
+        r1, c1 = pos[a]; r2, c2 = pos[b]
+        if r1 == r2:
+            out.extend((square[r1 * 5 + (c1 - 1) % 5], square[r2 * 5 + (c2 - 1) % 5]))
+        elif c1 == c2:
+            out.extend((square[((r1 - 1) % 5) * 5 + c1], square[((r2 - 1) % 5) * 5 + c2]))
+        else:
+            out.extend((square[r1 * 5 + c2], square[r2 * 5 + c1]))
+    return "".join(out)
+
+
+def _playfair_worker(args):
+    text, seed, rounds = args
+    rng = random.Random(seed)
+    alphabet = list("ABCDEFGHIKLMNOPQRSTUVWXYZ")
+    square = alphabet[:]
+    rng.shuffle(square)
+    cur = _playfair_decrypt(text, square)
+    score = quadgram_score(cur)
+    best, bestscore = cur, score
+    for i in range(rounds):
+        a, b = rng.sample(range(25), 2)
+        square[a], square[b] = square[b], square[a]
+        trial = _playfair_decrypt(text, square)
+        q = quadgram_score(trial)
+        temp = .6 * (1 - i / max(1, rounds)) + .02
+        if q > score or rng.random() < math.exp(min(0.0, (q - score) / temp)):
+            cur, score = trial, q
+        else:
+            square[a], square[b] = square[b], square[a]
+        if score > bestscore:
+            best, bestscore = cur, score
+    return best, bestscore
+
+
+@solver("playfair", lambda fp: _text_prior(fp) if fp["length"] >= 40 else 0)
+def solve_playfair(data, ctx):
+    if len(data) > 5000 or ctx.depth > 1:
+        return
+    try:
+        text = data.decode("ascii")
+    except UnicodeDecodeError:
+        return
+    vals = _parallel_map(_playfair_worker,
+                         [(text, 29, 1700), (text, 991, 1700)], ctx)
+    for out, _ in vals:
+        if out:
+            yield out, "playfair", {"hillclimb": True}, assess(out)[0]
+
+
+def _xor(data, key):
+    return bytes(value ^ key[i % len(key)] for i, value in enumerate(data))
+
+
+def _printable(buf):
+    return all(32 <= c < 127 or c in (9, 10, 13) for c in buf)
+
+
+def _margin_conf(margin):
+    """Map a score margin (nats/char) to a 0.62..0.97 confidence."""
+    return .62 + .35 * max(0.0, min(1.0, margin / .5))
+
+
+@solver("xor-single-byte", lambda fp: _xor_prior(fp) if fp["length"] <= 10_000 else 0)
+def solve_xor_single(data, ctx):
+    if not data or ctx.depth > 3:
+        return
+    cribs = [ctx.known_plaintext.encode("utf-8")] if ctx.known_plaintext else []
+    cribs.extend((b"flag{", b"ctf{", b"FLAG{"))
+    found = {}
+    for crib in cribs:
+        for off in range(max(0, len(data) - len(crib) + 1)):
+            key = data[off] ^ crib[0]
+            if all((data[off + j] ^ key) == ch for j, ch in enumerate(crib)):
+                found[key] = _xor(data, bytes([key]))
+    # Printable plaintext (any language, any flag prefix): rank all 256 keys with
+    # the plaintext model. Near-miss keys also print, so confidence comes from
+    # the margin over the runner-up, not from "it is printable".
+    scored = []
+    if len(data) >= 6:
+        for key in range(256):
+            out = _xor(data, bytes([key]))
+            sc = plain_text_score(out, flag_bonus=True)
+            if sc > -math.inf:
+                scored.append((sc, key, out))
+        scored.sort(reverse=True)
+    seen = set()
+    for key, out in found.items():
+        seen.add(out)
+        yield out, "single-byte XOR", {"key": f"0x{key:02x}", "_statistical": True}, 1.0
+    for i, (sc, key, out) in enumerate(scored[:3]):
+        if out in seen:
+            continue
+        seen.add(out)
+        params = {"key": f"0x{key:02x}"}
+        if i == 0:
+            margin = sc - scored[1][0] if len(scored) > 1 else .5
+            params["_statistical"] = True
+            yield out, "single-byte XOR", params, _margin_conf(margin)
+        else:
+            yield out, "single-byte XOR", params, _rank_score(out)
+    if not scored and not found:      # binary plaintext: fall back to English-likeness
+        ranked = sorted(((assess(_xor(data, bytes([k])))[0], k) for k in range(256)), reverse=True)[:4]
+        for sc, k in ranked:
+            yield _xor(data, bytes([k])), "single-byte XOR", {"key": f"0x{k:02x}"}, sc
+
+
+_UNI_OK = [u != -math.inf for u in __import__("scoring")._UNI]
+
+
+def plain_text_score_byte(b):
+    return __import__("scoring")._UNI[b]
+
+
+def _hamming(a, b):
+    if _np is not None and a:
+        try:
+            return int(_np.unpackbits(_np.bitwise_xor(_np.frombuffer(a, dtype=_np.uint8),
+                                                      _np.frombuffer(b, dtype=_np.uint8))).sum())
+        except Exception:
+            pass
+    return sum((x ^ y).bit_count() for x, y in zip(a, b))
+
+
+def _repeat_xor_key(data, size):
+    key = []
+    for col in range(size):
+        column = data[col::size][:500]
+        best_score, best_key = -float("inf"), 0
+        for k in range(256):
+            letters = [v ^ k for v in column]
+            printable = sum(v in (9, 10, 13) or 32 <= v < 127 for v in letters) / max(1, len(letters))
+            hist = collections.Counter(v for v in letters if 97 <= v <= 122 or 65 <= v <= 90)
+            n = sum(hist.values())
+            chi = (sum((hist.get(c, 0) - n * _EN_FREQ[c - 97]) ** 2 /
+                       max(.001, n * _EN_FREQ[c - 97]) for c in range(97, 123))
+                   if n else 26.0)
+            spaces = letters.count(32) / max(1, len(letters))
+            score = 1.8 * printable + .25 * spaces - .20 * chi / max(1, n)
+            if score > best_score:
+                best_score, best_key = score, k
+        best = best_key
+        key.append(best)
+    return bytes(key)
+
+
+def _primitive_key(key):
+    for size in range(1, len(key) + 1):
+        if len(key) % size == 0 and key == key[:size] * (len(key) // size):
+            return key[:size]
+    return key
+
+
+
+_XMASK = None
+
+
+def _xor_masks():
+    """_XMASK[cls][x] = 256-bit mask of key bytes k for which (x ^ k) is in class cls."""
+    global _XMASK
+    if _XMASK is None:
+        alnum = set(map(ord, string.ascii_letters + string.digits + "_"))
+        body = {c for c in range(33, 127) if c not in (ord("{"), ord("}"))}
+        classes = {"alnum": alnum, "open": {ord("{")}, "body": body, "close": {ord("}")}}
+        _XMASK = {}
+        for name, members in classes.items():
+            _XMASK[name] = [sum(1 << k for k in range(256) if (x ^ k) in members)
+                            for x in range(256)]
+    return _XMASK
+
+
+def _flag_crib_xor(data):
+    """Repeating-key XOR where the plaintext is PREFIX{body}: alnum prefix (2-30),
+    '{', body without spaces/braces, final '}'. Each hypothesis (key length, brace
+    position) pins key bytes exactly; no language or prefix is assumed."""
+    M = _xor_masks()
+    full = (1 << 256) - 1
+    n = len(data)
+    found = []
+    for L in range(1, max(1, min(16, n // 6)) + 1):   # >= 6 chars per key byte, as above
+        cols = []
+        for c in range(L):
+            idx = list(range(c, n, L))
+            A = [full]                      # A[t]: first t indices all alnum
+            for i in idx:
+                A.append(A[-1] & M["alnum"][data[i]])
+            S = [full] * (len(idx) + 1)     # S[u]: indices idx[u:] all body (last char is '}')
+            for u in range(len(idx) - 1, -1, -1):
+                S[u] = S[u + 1] & (full if idx[u] == n - 1 else M["body"][data[idx[u]]])
+            cols.append((idx, A, S))
+        for j in range(2, min(30, n - 3) + 1):
+            keys, ok = [], True
+            for c in range(L):
+                idx, A, S = cols[c]
+                t = bisect.bisect_left(idx, j)
+                m = A[t]
+                u = t
+                if u < len(idx) and idx[u] == j:
+                    m &= M["open"][data[j]]
+                    u += 1
+                m &= S[u]
+                if idx and idx[-1] == n - 1:
+                    m &= M["close"][data[n - 1]]
+                if not m:
+                    ok = False
+                    break
+                surv = [k for k in range(256) if m >> k & 1]
+                keys.append(max(surv, key=lambda k: sum(plain_text_score_byte(data[i] ^ k)
+                                                        for i in idx)))
+            if ok:
+                kb = bytes(keys)
+                found.append((_primitive_key(kb), _xor(data, kb)))
+    return found
+
+@solver("xor-repeating", lambda fp: _repeat_xor_prior(fp))
+def solve_xor_repeating(data, ctx):
+    if len(data) < 12 or len(data) > 100_000 or ctx.depth > 3:
+        return
+    cands = []    # (adjusted score, key, plaintext)
+    n = len(data)
+    mdl = lambda L: L * math.log(256) / n          # cost of describing the key, per char
+    try:
+        _ascii_txt = data.decode("ascii")
+    except Exception:
+        _ascii_txt = ""
+    _textual = False
+    if _ascii_txt and len(data) > 0:
+        _textual = sum(32 <= ord(c) < 127 for c in _ascii_txt) / len(data) > 0.9
+    crib_keys = [k for k, _ in _flag_crib_xor(data)] if 8 <= n <= 600 else []
+    if n <= 3000:
+        # each key byte must see >= 8 characters, or any text can be made to look plausible
+        # Flag-shaped plaintexts (prefix{leet_body}) are best judged by flag-shape
+        # + leet-body plausibility; plain_text_score alone is blind to the
+        # body's leet words and can prefer a corrupted key (e.g. k8y over k3y).
+        import re as _re
+        _FLAGISH_LOCAL = _re.compile(r"[A-Za-z0-9_]{2,30}\{[^{}\s]{1,300}\}")
+        _LEET_BASE = str.maketrans("03457@$", "oeastas")
+        _LEET_ALT = {"1": "il", "3": "ea"}
+
+        def _leet_word_variants(tok):
+            """Candidate real-word spellings of a leet token (digits mapped to
+            their letter choices, ambiguous 1/3 expanded)."""
+            choices = []
+            for ch in tok:
+                if ch in _LEET_ALT:
+                    choices.append(_LEET_ALT[ch])
+                elif ch in "03457@$":
+                    choices.append(ch.translate(_LEET_BASE))
+                else:
+                    choices.append(ch)
+            cands = [""]
+            for ch_set in choices:
+                cands = [c + ch for c in cands for ch in ch_set]
+            return [c for c in cands if len(c) >= 3]
+
+        def _leet_body_dict_frac(body):
+            toks = body.lower().split("_")
+            hits = total = 0
+            for t in toks:
+                if not any(ch.isalpha() for ch in t):
+                    continue
+                total += 1
+                if any(v in WORDS for v in _leet_word_variants(t)):
+                    hits += 1
+            return (hits / total) if total else 0.0
+
+        def _flagaware(o):
+            txt = o.decode("latin-1")
+            pts = plain_text_score(o, flag_bonus=True)
+            base = pts
+            m = _FLAGISH_LOCAL.search(txt)
+            if m and (m.end() - m.start()) >= 0.9 * max(1, len(txt)):
+                body = m.group(0)[m.group(0).index("{") + 1:-1]
+                alnum_frac = sum(c.isalnum() for c in body) / max(1, len(body))
+                # A complete, well-formed flag is a strong structural signal;
+                # plain_text_score alone can prefer punctuation-like junk.
+                # Weight the real leet-word evidence above cosmetic shape.
+                base += 2.5 + 4.0 * _leet_body_dict_frac(body) + 0.6 * alnum_frac
+            else:
+                # Plain-English decodes (no flag shape) must also compete: add a
+                # dictionary-gated English bonus so real English beats
+                # brace-shaped gibberish.
+                ec = english_confidence(txt)
+                if ec >= 0.5:
+                    base += 1.2 * ec + 0.5
+            return base
+        _has_flag_shape = bool(_FLAGISH_LOCAL.search(_ascii_txt)) if _ascii_txt else False
+        crib_seeds = [k for k in crib_keys]
+        # Crib-derived keys are shape-consistent full keys: score them with the
+        # same flag-aware objective so they cannot outrank the true recovery on
+        # raw plain_text_score alone.
+        for k in crib_keys:
+            o = _xor(data, k)
+            cands.append((_flagaware(o) - mdl(len(k)), _primitive_key(k), o))
+        rng = random.Random(12345)
+        # Work-based: the key-length range is bounded (2..min(12, n//3)), so
+        # evaluate ALL lengths regardless of wall-clock progress. Cutting the
+        # loop on expiry would make the best key depend on machine load.
+        for L in range(2, max(2, min(12, n // 3)) + 1):
+            cols = []
+            for c in range(L):
+                col = data[c::L]
+                cols.append([k for k in range(256) if all(_UNI_OK[x ^ k] for x in col)])
+                if not cols[-1]:
+                    break
+            else:
+                # Short repeating-key XOR flags: try the full joint key space,
+                # capped to the top per-column candidates. This guarantees the
+                # true key is evaluated instead of relying on coordinate ascent
+                # finding it from a seed. Blobs that are already flag-shaped
+                # text are skipped (they are decode output, not XOR ciphertext).
+                # L<=3 up to n=200 (longer flags), L<=4 up to n=32 (blind xor4),
+                # L=5 up to n=60 (short flags; the joint space stays bounded by
+                # the product cap below).
+                if ((L <= 3 and n <= 200) or (L <= 4 and n <= 32)
+                        or (L == 5 and n <= 60)) and not _has_flag_shape \
+                        and not _textual:
+                    # Per-column candidates: top unigram scores UNION the flag-
+                    # shape-consistent survivors (bytes that can map a whole
+                    # column to a valid prefix{body} flag). Unigram ranking
+                    # alone prunes the true byte when a column is mostly
+                    # digits/underscores (e.g. body '6' scoring lower than a
+                    # guessed letter).
+                    M = _xor_masks()
+                    full = (1 << 256) - 1
+                    shape = [0] * L
+                    idxs = [list(range(c, n, L)) for c in range(L)]
+                    for j in range(2, min(30, n - 3) + 1):
+                        for c in range(L):
+                            idx = idxs[c]
+                            A = [full]
+                            for i in idx:
+                                A.append(A[-1] & M["alnum"][data[i]])
+                            S = [full] * (len(idx) + 1)
+                            for u in range(len(idx) - 1, -1, -1):
+                                S[u] = S[u + 1] & (full if idx[u] == n - 1 else M["body"][data[idx[u]]])
+                            t = bisect.bisect_left(idx, j)
+                            m = A[t]
+                            u = t
+                            if u < len(idx) and idx[u] == j:
+                                m &= M["open"][data[j]]
+                                u += 1
+                            m &= S[u]
+                            if idx and idx[-1] == n - 1:
+                                m &= M["close"][data[n - 1]]
+                            shape[c] |= m
+                    capped = []
+                    for c in range(L):
+                        by_score = sorted(cols[c], key=lambda k: -sum(plain_text_score_byte(x ^ k)
+                                                                     for x in data[c::L]))
+                        # Shape-consistent survivors first (they contain the true
+                        # byte by construction), then fill with the best-scoring
+                        # bytes. Keep ALL shape∩printable candidates when they
+                        # are small enough (<=128) — the true byte can sit below
+                        # a top-24 score cut (J1c). Only degenerate columns with
+                        # >128 shape survivors fall back to a tight cap.
+                        shape_set = [k for k in by_score if shape[c] >> k & 1]
+                        cap = 128 if len(shape_set) <= 128 else 24
+                        merged = dict.fromkeys(shape_set + by_score)
+                        capped.append(list(merged)[:cap])
+                    # Work-based budget: cap the joint product at 2M combos.
+                    # The result is computed from fixed iteration counts, so it
+                    # is identical regardless of machine load (time stays only
+                    # as an outer safety cap).
+                    import itertools
+                    prod = 1
+                    for c in capped:
+                        prod *= len(c)
+                    if prod > 40_000:
+                        # Fallback: keep ONLY shape-consistent survivors (they
+                        # contain the true byte by construction), ordered by
+                        # score, and trim the widest column until the joint
+                        # product fits the work budget. Always deterministic.
+                        capped = [list(dict.fromkeys(
+                            [k for k in by_score if shape[c] >> k & 1]))[:128]
+                            for c, by_score in enumerate(
+                                [sorted(cols[cc], key=lambda k: -sum(
+                                    plain_text_score_byte(x ^ k) for x in data[cc::L]))
+                                 for cc in range(L)])]
+                        prod = 1
+                        for c in capped:
+                            prod *= len(c)
+                        while prod > 40_000 and any(len(c) > 1 for c in capped):
+                            i = max(range(L), key=lambda cc: len(capped[cc]))
+                            del capped[i][-1]
+                            prod = 1
+                            for c in capped:
+                                prod *= len(c)
+                    best = None
+                    # For short flags (L>=4, n<=60) the joint space is often
+                    # too large to enumerate fully; first try a bounded
+                    # deterministic seed-product ascent over the top-2 shape
+                    # survivors per column. If it converges to a strong
+                    # leet-body flag, accept it and skip the joint enumeration.
+                    if L >= 4 and n <= 60:
+                        # Diversify only the ambiguous columns (many shape
+                        # survivors); tight columns stay pinned.
+                        _seed_lists = [
+                            capped[c][:3] if len(capped[c]) > 40 else
+                            capped[c][:2] if len(capped[c]) > 1 else
+                            capped[c][:1] for c in range(L)]
+                        _seed_count = 1
+                        for _lst in _seed_lists:
+                            _seed_count *= len(_lst)
+                        if _seed_count <= 128:
+                            for _combo in itertools.product(*_seed_lists):
+                                _key = list(_combo)
+                                _cur = _flagaware(_xor(data, bytes(_key)))
+                                _improved = True
+                                while _improved:
+                                    _improved = False
+                                    for c in range(L):
+                                        for k in cols[c]:
+                                            if k == _key[c]:
+                                                continue
+                                            _trial = _key[:]
+                                            _trial[c] = k
+                                            _sc = _flagaware(_xor(data, bytes(_trial)))
+                                            if _sc > _cur + 1e-9:
+                                                _cur, _key, _improved = _sc, _trial, True
+                                _fr = leet_body_dict_fraction(
+                                    _xor(data, bytes(_key)).decode("latin-1"))
+                                if best is None or _cur > best[0] or (
+                                        _cur == best[0] and _fr > best[2]):
+                                    best = (_cur, _key, _fr)
+                            if best is not None and best[2] >= 0.6:
+                                out = _xor(data, bytes(best[1]))
+                                cands.append((best[0] - mdl(L),
+                                             _primitive_key(bytes(best[1])), out))
+                                continue
+                        best = None
+                    def _presort(o):
+                        # Cheap proxy for the flag-aware objective: plain-text
+                        # score plus leet-body dictionary evidence (the real
+                        # discriminator for flag bodies). Only pay for the
+                        # leet analysis when a flag body is actually present.
+                        pts = plain_text_score(o, flag_bonus=True)
+                        t = o.decode("latin-1")
+                        if "{" not in t or "}" not in t:
+                            return pts
+                        return pts + 4.0 * leet_body_dict_fraction(t)
+                    fast_top = []
+                    for combo in itertools.product(*capped):
+                        if len(fast_top) < 5000:
+                            fast_top.append((_presort(_xor(data, bytes(combo))), combo))
+                        else:
+                            fast_top.sort(key=lambda t: -t[0])
+                            del fast_top[2500:]
+                    fast_top.sort(key=lambda t: -t[0])
+                    for _, combo in fast_top[:5000]:
+                        o = _xor(data, bytes(combo))
+                        cur = _flagaware(o)
+                        # Deterministic tie-break: among equal objective
+                        # scores prefer the key whose decode has the most
+                        # leet-dictionary body evidence.
+                        frac = leet_body_dict_fraction(o.decode("latin-1"))
+                        if best is None or cur > best[0] or (
+                                cur == best[0] and frac > best[1]):
+                            best = (cur, list(combo), frac)
+                    if best is not None:
+                        out = _xor(data, bytes(best[1]))
+                        cands.append((best[0] - mdl(L),
+                                      _primitive_key(bytes(best[1])), out))
+                    continue
+                # Coordinate ascent is only reliable from good seeds: the greedy
+                # per-column key, every flag-shape-constrained crib key of this
+                # length, and a few deterministic random restarts. The joint
+                # flag-aware objective steers each walk to the true flag. For
+                # large blobs, cap the per-column trial set so whole-buffer
+                # re-scoring stays bounded.
+                if n > 64:
+                    trial_cols = [sorted(ks, key=lambda k: -sum(plain_text_score_byte(x ^ k)
+                                                                for x in data[c::L]))[:12]
+                                  for c, ks in enumerate(cols)]
+                    ascent_rounds = 1
+                    restarts = 1
+                else:
+                    trial_cols = cols
+                    ascent_rounds = 4 if L >= 4 else 3
+                    restarts = (48 if (L >= 4 and n <= 40 and not _textual)
+                                else (16 if (L >= 4 and not _textual) else 2))
+                seeds = []
+                seeds.append([max(ks, key=lambda k, c=c: sum(plain_text_score_byte(x ^ k)
+                                                            for x in data[c::L]))
+                              for c, ks in enumerate(cols)])
+                seeds.extend(k for k in crib_seeds if len(k) == L)
+                for _ in range(restarts):
+                    seeds.append([rng.choice(cols[c]) for c in range(L)])
+                best = None
+                for key0 in seeds:
+                    key = list(key0)
+                    cur = _flagaware(_xor(data, bytes(key)))
+                    for _ in range(ascent_rounds):
+                        improved = False
+                        for c in range(L):
+                            for k in trial_cols[c]:
+                                if k == key[c]:
+                                    continue
+                                trial = key[:]
+                                trial[c] = k
+                                sc = _flagaware(_xor(data, bytes(trial)))
+                                if sc > cur + 1e-9:
+                                    cur, key, improved = sc, trial, True
+                        if not improved:
+                            break
+                    if best is None or cur > best[0]:
+                        best = (cur, key[:])
+                out = _xor(data, bytes(best[1]))
+                cands.append((best[0] - mdl(L),
+                              _primitive_key(bytes(best[1])), out))
+    if cands:
+        cands.sort(key=lambda r: r[0], reverse=True)
+        seen, picked = set(), []
+        for adj, k, o in cands:
+            if o not in seen:
+                seen.add(o)
+                picked.append((adj, k, o))
+        for i, (adj, k, o) in enumerate(picked[:3]):
+            params = {"key_hex": k.hex()}
+            if i == 0:
+                margin = adj - picked[1][0] if len(picked) > 1 else .5
+                params["_statistical"] = True
+                yield o, "repeating-key XOR", params, _margin_conf(margin)
+            else:
+                yield o, "repeating-key XOR", params, _rank_score(o)
+        return
+    sizes = range(2, min(41, len(data) // 3))
+    distances = []
+    for size in sizes:
+        blocks = [data[i:i + size] for i in range(0, min(len(data), size * 5), size)]
+        pairs = [_hamming(blocks[i], blocks[i + 1]) / size for i in range(len(blocks) - 1)]
+        if pairs:
+            distances.append((sum(pairs) / len(pairs), size))
+    likely = [s for _, s in sorted(distances)[:16]]
+    ranked = []
+    for size in likely:
+        key = _primitive_key(_repeat_xor_key(data, size))
+        out = _xor(data, key)
+        ranked.append((assess(out)[0], key, out))
+    for score, key, out in sorted(ranked, reverse=True)[:3]:
+        yield out, "repeating-key XOR", {"key_hex": key.hex()}, score
+
+
+@solver("known-plaintext-XOR", lambda fp: .99 if fp["length"] else 0)
+def solve_xor_crib(data, ctx):
+    if not ctx.known_plaintext or len(data) > 1_000_000 or ctx.depth > 0:
+        return
+    crib = ctx.known_plaintext.encode()
+    for off in range(len(data) - len(crib) + 1):
+        key = bytes(data[off + i] ^ crib[i] for i in range(len(crib)))
+        # Treat crib length as a repeating key only when its inferred periods agree.
+        for size in range(1, min(len(key), 64) + 1):
+            if all(key[i] == key[i % size] for i in range(len(key))):
+                out = _xor(data, key[:size])
+                if crib in out:
+                    yield out, "known-plaintext XOR", {"key_hex": key[:size].hex()}, 1.0
+                    return
+
+
+@solver("many-time-pad", lambda fp: .25 if fp["length"] >= 16 else 0)
+def solve_many_time_pad(data, ctx):
+    # Accept newline-separated hex ciphertexts, one per line.
+    if ctx.depth > 0:
+        return
+    lines = data.splitlines()
+    if len(lines) < 2:
+        return
+    try:
+        ciphers = [bytes.fromhex(line.decode().strip()) for line in lines if line.strip()]
+    except (ValueError, UnicodeError):
+        return
+    if len(ciphers) < 2 or not ciphers or max(map(len, ciphers)) > 10_000:
+        return
+    ctx.findings.append("Multiple ciphertexts supplied; possible reused stream-cipher nonce.")
+    cribs = [ctx.known_plaintext.encode()] if ctx.known_plaintext else []
+    cribs.extend([b" the ", b" and ", b" flag{", b" the", b" of "])
+    candidates = []
+    for a, b in itertools.combinations(ciphers, 2):
+        for crib in cribs:
+            for off in range(max(1, min(len(a), len(b)) - len(crib) + 1)):
+                if off + len(crib) > min(len(a), len(b)):
+                    continue
+                key = bytes(a[off + i] ^ crib[i] for i in range(len(crib)))
+                plain = bytes(b[off + i] ^ key[i] for i in range(len(crib)))
+                candidates.append((plain, off))
+    for plain, off in candidates[:3]:
+        yield from _emit(ctx, plain, "many-time-pad crib drag", {"offset": off})
+
+
+def _b64url(part):
+    return base64.urlsafe_b64decode(part + b"=" * ((-len(part)) % 4))
+
+
+@solver("JWT", lambda fp: _prior(fp, "jwt"))
+def solve_jwt(data, ctx):
+    try:
+        head, body, sig = data.strip().split(b".")
+        header = json.loads(_b64url(head))
+        payload = json.loads(_b64url(body))
+        out = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        if header.get("alg", "").lower() == "none" and not sig:
+            ctx.findings.append("JWT uses alg=none (unsigned token).")
+        yield from _emit(ctx, out, "JWT payload decode", {"alg": header.get("alg", "?")})
+        if header.get("alg") == "HS256" and ctx.wordlist:
+            signing = head + b"." + body
+            for secret in ctx.wordlist:
+                digest = hmac.new(secret.strip(), signing, hashlib.sha256).digest()
+                if hmac.compare_digest(digest, _b64url(sig)):
+                    ctx.findings.append("JWT HS256 secret recovered from wordlist.")
+                    yield from _emit(ctx, out, "JWT HS256 cracked", {"secret": secret.decode("utf-8", "replace")})
+                    break
+    except (ValueError, TypeError, KeyError, binascii.Error, json.JSONDecodeError):
+        return
+
+
+def _md4(data: bytes) -> bytes:
+    """Small pure-Python MD4 fallback used for NTLM wordlist checks."""
+    msg = bytearray(data)
+    bitlen = len(msg) * 8
+    msg.append(0x80)
+    while len(msg) % 64 != 56:
+        msg.append(0)
+    msg += bitlen.to_bytes(8, "little")
+    mask = 0xffffffff
+    def rol(x, n):
+        x &= mask
+        return ((x << n) | (x >> (32 - n))) & mask
+    h = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476]
+    for block in range(0, len(msg), 64):
+        X = [int.from_bytes(msg[block + i:block + i + 4], "little") for i in range(0, 64, 4)]
+        a, b, c, d = h
+        for i in range(16):
+            k = i; s = (3, 7, 11, 19)[i % 4]
+            f = (b & c) | (~b & d)
+            a, b, c, d = d, rol(a + f + X[k], s), b, c
+        for i in range(16):
+            k = (i % 4) * 4 + i // 4; s = (3, 5, 9, 13)[i % 4]
+            g = (b & c) | (b & d) | (c & d)
+            a, b, c, d = d, rol(a + g + X[k] + 0x5a827999, s), b, c
+        order = (0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15)
+        for i in range(16):
+            k = order[i]; s = (3, 9, 11, 15)[i % 4]
+            hh = b ^ c ^ d
+            a, b, c, d = d, rol(a + hh + X[k] + 0x6ed9eba1, s), b, c
+        h = [(x + y) & mask for x, y in zip(h, (a, b, c, d))]
+    return b"".join(x.to_bytes(4, "little") for x in h)
+
+
+@solver("hash-identification", lambda fp: .95 if fp["hashes"] else 0)
+def solve_hash(data, ctx):
+    if ctx.depth > 0:
+        return
+    if not data.strip():
+        return
+    kind = fingerprint_hash(data.strip())
+    if not kind:
+        return
+    ctx.findings.append(f"Hash fingerprint: {kind}.")
+    if not ctx.wordlist:
+        return
+    target = data.strip().decode("ascii", "ignore").lower()
+    if kind == "bcrypt" and _bcrypt is None:
+        ctx.findings.append("bcrypt identified; wordlist cracking needs the optional bcrypt module.")
+        return
+    cost_match = re.match(r"^\$2[aby]\$(\d\d)\$", target)
+    bcrypt_cost = int(cost_match.group(1)) if cost_match else 99
+    for word in ctx.wordlist:
+        if ctx.expired():
+            return
+        raw = word.rstrip(b"\r\n")
+        if kind == "bcrypt":
+            if bcrypt_cost > 14:
+                ctx.findings.append("bcrypt cost is too high for a bounded wordlist attempt.")
+                return
+            try:
+                if _bcrypt.checkpw(raw, target.encode()):
+                    yield from _emit(ctx, raw, "cracked bcrypt", {"word": raw.decode("utf-8", "replace")})
+                    return
+            except (ValueError, TypeError):
+                return
+            continue
+        checks = {
+            "MD5": hashlib.md5(raw).hexdigest(),
+            "SHA-1": hashlib.sha1(raw).hexdigest(),
+            "SHA-256": hashlib.sha256(raw).hexdigest(),
+            "NTLM": _md4(raw.decode("utf-8", "replace").encode("utf-16le")).hex(),
+        }
+        if target in checks.values():
+            yield from _emit(ctx, raw, f"cracked {kind}", {"word": raw.decode("utf-8", "replace")})
+            return
+
+
+def fingerprint_hash(data):
+    if re.fullmatch(rb"[0-9a-fA-F]{32}", data):
+        return "MD5/NTLM"
+    if re.fullmatch(rb"[0-9a-fA-F]{40}", data):
+        return "SHA-1"
+    if re.fullmatch(rb"[0-9a-fA-F]{64}", data):
+        return "SHA-256"
+    if re.fullmatch(rb"\$2[aby]\$\d\d\$[./A-Za-z0-9]{53}", data):
+        return "bcrypt"
+    return ""
+
+
+def _parse_int(value):
+    if isinstance(value, int):
+        return value
+    value = str(value).strip().replace("_", "").replace(",", "")
+    return int(value, 0) if value.lower().startswith("0x") else int(value, 10)
+
+
+def _rsa_values(data, ctx):
+    values = dict(ctx.rsa_params or {})
+    try:
+        obj = json.loads(data.decode("utf-8"))
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                values.setdefault(k.lower(), v)
+    except (UnicodeError, json.JSONDecodeError):
+        pass
+    if ctx.rsa_params or sum(c in (9, 10, 13) or 32 <= c < 127 for c in data[:100_000]) / max(1, min(len(data), 100_000)) > .8:
+        try:
+            text = data.decode("ascii", "ignore")
+            for key, value in re.findall(
+                r"\b(n\d*|modulus\d*|e\d*|exponent\d*|c\d*|ciphertext\d*|cyphertext\d*|cypher\d*|cipher\d*|ct\d*|enc\d*|encrypted\d*|message\d*|msg\d*)\s*[:=]?\s*(0x[0-9a-f]+|\d+)",
+                text, re.I,
+            ):
+                values.setdefault(key.lower(), value)
+        except Exception:
+            pass
+    normalized = {}
+    aliases = {
+        "n": ("n", "modulus"), "e": ("e", "exponent"),
+        "c": ("c", "ciphertext", "cyphertext", "cypher", "cipher", "ct", "enc", "encrypted", "message", "msg"),
+    }
+    for target, keys in aliases.items():
+        for key in keys:
+            if key in values:
+                try:
+                    normalized[target] = _parse_int(values[key])
+                    break
+                except (ValueError, TypeError):
+                    pass
+    normalized.update({k: v for k, v in values.items() if re.fullmatch(r"(?:n|e|c)\d+", k)})
+    for key, value in list(normalized.items()):
+        if isinstance(value, str):
+            try:
+                normalized[key] = _parse_int(value)
+            except ValueError:
+                normalized.pop(key, None)
+    # Unlabeled fallback: exactly three large integers in the file, no
+    # n/e/c labels found, in "n e c" order. Guarded to avoid hijacking
+    # other 3-number formats (e.g. DLP/LGG triples): n > c, e >= 2.
+    if not (normalized.get("n") and normalized.get("e") and normalized.get("c") is not None):
+        try:
+            text = data.decode("ascii", "ignore")
+            nums = [int(x) for x in re.findall(r"\b\d+\b", text)]
+            if len(nums) == 3 and nums[0] > nums[2] and nums[1] >= 2 and nums[2] > 0:
+                normalized.setdefault("n", nums[0])
+                normalized.setdefault("e", nums[1])
+                normalized.setdefault("c", nums[2])
+            elif len(nums) == 4 and nums[2] >= 2 and nums[0] * nums[1] > nums[3] > 0:
+                # unlabeled "p q e c" (any order p/q is fine)
+                normalized.setdefault("p", nums[0])
+                normalized.setdefault("q", nums[1])
+                normalized.setdefault("e", nums[2])
+                normalized.setdefault("c", nums[3])
+        except Exception:
+            pass
+    return normalized
+
+
+def _integer_root(n, e):
+    if n < 0 or e < 1:
+        return None
+    if gmpy2 is not None:
+        root, exact = gmpy2.iroot(n, e)
+        return int(root) if exact else None
+    lo, hi = 0, 1 << ((n.bit_length() + e - 1) // e + 1)
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        power = mid ** e
+        if power == n:
+            return mid
+        if power < n:
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return None
+
+
+def _inv(a, n):
+    if _crypto_inverse is not None:
+        try:
+            return int(_crypto_inverse(a, n))
+        except ValueError:
+            return None
+    try:
+        return pow(a, -1, n)
+    except ValueError:
+        return None
+
+
+def _int_plain(n):
+    if n < 0:
+        return b""
+    return n.to_bytes(max(1, (n.bit_length() + 7) // 8), "big")
+
+
+def _egcd(a, b):
+    if b == 0:
+        return a, 1, 0
+    g, x, y = _egcd(b, a % b)
+    return g, y, x - (a // b) * y
+
+
+def _pollard_rho(n, ctx):
+    if n % 2 == 0:
+        return 2
+    rng = random.Random(0xC7F)
+    for _ in range(12):
+        x = rng.randrange(2, n - 1)
+        y, c, d = x, rng.randrange(1, n - 1), 1
+        for _ in range(12_000):
+            if ctx.expired():
+                return None
+            x = (x * x + c) % n
+            y = (y * y + c) % n
+            y = (y * y + c) % n
+            d = math.gcd(abs(x - y), n)
+            if d == n:
+                break
+            if d > 1:
+                return d
+    return None
+
+
+def _factor(n, ctx):
+    if n % 2 == 0:
+        return 2, n // 2
+    # Bounded small-prime trial division.
+    for p in (3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47):
+        if n % p == 0:
+            return p, n // p
+    for p in range(53, 20_001, 2):
+        if ctx.expired():
+            return None
+        if n % p == 0:
+            return p, n // p
+    # Fermat finds RSA moduli made from close primes.
+    a = math.isqrt(n)
+    if a * a < n:
+        a += 1
+    for _ in range(250_000):
+        if ctx.expired():
+            return None
+        b2 = a * a - n
+        b = math.isqrt(b2)
+        if b * b == b2:
+            p, q = a - b, a + b
+            if p > 1 and p * q == n:
+                return p, q
+        a += 1
+    p = _pollard_rho(n, ctx)
+    if p:
+        return p, n // p
+    # Last resort: the full factor_all pipeline (pm1/pp1/rho/batched ECM).
+    try:
+        from solvers_more import factor_all
+        fa = factor_all(n, ctx)
+        if fa and len(fa) == 2:
+            a, b = list(fa)
+            return a, b
+        if fa:
+            a = next(iter(fa))
+            return a, n // a
+    except Exception:
+        pass
+    return None
+
+
+def _wiener(n, e):
+    a, b = e, n
+    cf = []
+    while b:
+        q, a, b = a // b, b, a % b
+        cf.append(q)
+    p0, p1, q0, q1 = 0, 1, 1, 0
+    for x in cf:
+        p = x * p1 + p0
+        q = x * q1 + q0
+        p0, p1, q0, q1 = p1, p, q1, q
+        if q == 0 or p == 0:
+            continue
+        k, d = p, q
+        if (e * d - 1) % k:
+            continue
+        phi = (e * d - 1) // k
+        s = n - phi + 1
+        disc = s * s - 4 * n
+        if disc >= 0:
+            root = math.isqrt(disc)
+            if root * root == disc and (s + root) % 2 == 0:
+                return d
+    return None
+
+
+def _crt(residues, moduli):
+    product = math.prod(moduli)
+    total = 0
+    for r, n in zip(residues, moduli):
+        part = product // n
+        inv = _inv(part, n)
+        if inv is None:
+            return None
+        total += r * part * inv
+    return total % product
+
+
+@solver("RSA", lambda fp: .99 if fp["length"] else 0)
+def solve_rsa(data, ctx):
+    if ctx.depth > 0:
+        return
+    vals = _rsa_values(data, ctx)
+    n, e, c = vals.get("n"), vals.get("e"), vals.get("c")
+    if not n and vals.get("p") and vals.get("q"):
+        try:
+            n = int(vals["p"]) * int(vals["q"])
+            vals["n"] = n
+        except (TypeError, ValueError):
+            pass
+    # Tiny RSA-like assignments frequently appear by chance in arbitrary bytes.
+    if not ctx.rsa_params and n is not None and n < 256:
+        return
+    if n and e and c is not None and n > 1 and e > 0:
+        # p and q are given: decrypt directly via phi(n) — no factoring needed.
+        if vals.get("p") and vals.get("q"):
+            try:
+                _pp, _qq = int(vals["p"]), int(vals["q"])
+                if _pp * _qq == n:
+                    _phi = (_pp - 1) * (_qq - 1)
+                    _d = _inv(e, _phi)
+                    if _d is not None:
+                        _m = pow(c, _d, n)
+                        yield from _emit(ctx, _int_plain(_m), "RSA factored",
+                                         {"n": n, "e": e, "p": _pp,
+                                          "q": _qq, "d": _d, "m": _m})
+                        return
+            except (TypeError, ValueError):
+                pass
+        if c >= 0 and c < n and e <= 17:
+            m = _integer_root(c, e)
+            if m is not None:
+                yield from _emit(ctx, _int_plain(m), "RSA small-e exact root",
+                                 {"n": n, "e": e, "c": c, "m": m})
+        if c < n and e > 1:
+            # Wiener attack for an unusually small private exponent.
+            d = _wiener(n, e)
+            if d:
+                m = pow(c, d, n)
+                yield from _emit(ctx, _int_plain(m), "RSA Wiener attack",
+                                 {"n": n, "e": e, "d": d, "m": m})
+            factors = _factor(n, ctx)
+            if factors:
+                p, q = factors
+                phi = (p - 1) * (q - 1)
+                d = _inv(e, phi)
+                if d is not None:
+                    m = pow(c, d, n)
+                    yield from _emit(ctx, _int_plain(m), "RSA factored",
+                                     {"n": n, "e": e, "p": p, "q": q, "d": d, "m": m})
+    # Common-modulus case: same n, different exponents and ciphertexts.
+    e1, c1, e2, c2 = (vals.get(k) for k in ("e1", "c1", "e2", "c2"))
+    if n and all(x is not None for x in (e1, c1, e2, c2)):
+        g, a, b = _egcd(e1, e2)
+        x = pow(c1, a, n) if a >= 0 else pow(_inv(c1, n) or 0, -a, n)
+        y = pow(c2, b, n) if b >= 0 else pow(_inv(c2, n) or 0, -b, n)
+        m = (x * y) % n
+        if g == 1:
+            yield from _emit(ctx, _int_plain(m), "RSA common-modulus",
+                             {"n": n, "e1": e1, "e2": e2, "m": m})
+        else:
+            root = _integer_root(m, g)
+            if root is not None:
+                yield from _emit(ctx, _int_plain(root), "RSA common-modulus root",
+                                 {"n": n, "g": g, "m": root})
+    # Håstad broadcast: n1/e1/c1, n2/e2/c2, ...
+    triples = []
+    i = 1
+    while all(vals.get(f"{k}{i}") is not None for k in ("n", "e", "c")):
+        triples.append((vals[f"n{i}"], vals[f"e{i}"], vals[f"c{i}"]))
+        i += 1
+    if len(triples) >= 2 and len({x[1] for x in triples}) == 1:
+        exp = triples[0][1]
+        if len(triples) >= exp:
+            combined = _crt([x[2] for x in triples[:exp]], [x[0] for x in triples[:exp]])
+            m = _integer_root(combined, exp) if combined is not None else None
+            if m is not None:
+                yield from _emit(ctx, _int_plain(m), "RSA Hastad broadcast",
+                                 {"e": exp, "m": m, "moduli": [x[0] for x in triples[:exp]]})
+
+
+# More encodings/ciphers and image/file steganography, kept in their own
+# modules; importing here registers them into the same REGISTRY.
+import solvers_extra  # noqa: E402,F401
+import stego  # noqa: E402,F401
+import solvers_mega  # noqa: E402,F401
+import solvers_more  # noqa: E402,F401
+import solvers_plus  # noqa: E402,F401
+import solvers_pack3  # noqa: E402,F401
+import solvers_pack5  # noqa: E402,F401
+import solvers_pack6  # noqa: E402,F401
+import solvers_pack7  # noqa: E402,F401
+
+
+# ------------------------------------------------ G2: linear recurrence + derived key
+import sys as _sys
+try:
+    _sys.set_int_max_str_digits(30000)
+except Exception:
+    pass
+
+def _g2_safe_eval(node, consts):
+    """Safe static evaluation of integer expressions (int(...), **, named consts)."""
+    import ast
+    if isinstance(node, ast.Constant) and isinstance(node.value, int):
+        return node.value
+    if isinstance(node, ast.Constant) and isinstance(node.value, float) and node.value.is_integer():
+        return int(node.value)
+    if isinstance(node, ast.Name):
+        v = consts.get(node.id)
+        return v if isinstance(v, int) else None
+    if isinstance(node, ast.BinOp):
+        a = _g2_safe_eval(node.left, consts)
+        b = _g2_safe_eval(node.right, consts)
+        if a is None or b is None:
+            return None
+        if isinstance(node.op, ast.Add):
+            return a + b
+        if isinstance(node.op, ast.Sub):
+            return a - b
+        if isinstance(node.op, ast.Mult):
+            return a * b
+        if isinstance(node.op, ast.Pow):
+            return a ** b
+        if isinstance(node.op, ast.FloorDiv):
+            return a // b
+        if isinstance(node.op, ast.Mod):
+            return a % b
+        return None
+    if isinstance(node, ast.Call) and getattr(node.func, "id", "") in ("int", "abs"):
+        if node.args and len(node.args) <= 2:
+            v = _g2_safe_eval(node.args[0], consts)
+            return v if v is not None else None
+    return None
+
+
+def _g2_offset_of(node, argname, consts):
+    """i, i-4, i+2, or numeric offset."""
+    import ast
+    if isinstance(node, ast.Name) and node.id == argname:
+        return 0
+    if isinstance(node, ast.BinOp):
+        left, op, right = node.left, node.op, node.right
+        if isinstance(left, ast.Name) and left.id == argname:
+            c = _g2_safe_eval(right, consts)
+            if c is not None:
+                return c if isinstance(op, ast.Sub) else -c if isinstance(op, ast.Add) else None
+        if isinstance(right, ast.Name) and right.id == argname and isinstance(op, ast.Sub):
+            c = _g2_safe_eval(left, consts)
+            return c if c is not None else None
+    return _g2_safe_eval(node, consts)
+
+
+def _g2_extract_linear(node, fname, base, argname=None):
+    """Recursively parse an expression tree into (coeffs {offset:int}, constant)."""
+    import ast
+    if isinstance(node, ast.Call) and getattr(node.func, "id", "") == fname and node.args:
+        off = _g2_offset_of(node.args[0], argname, base) if argname else _g2_safe_eval(node.args[0], base)
+        if off is not None:
+            return {off: 1}, 0
+    if isinstance(node, ast.BinOp):
+        a_raw = _g2_extract_linear(node.left, fname, base, argname)
+        if a_raw is None:
+            return None
+        a, ca = a_raw
+        b_raw = _g2_extract_linear(node.right, fname, base, argname)
+        if b_raw is None:
+            return None
+        b, cb = b_raw
+        if isinstance(node.op, ast.Add):
+            c = {}
+            for k, v in list(a.items()) + list(b.items()):
+                c[k] = c.get(k, 0) + v
+            return c, ca + cb
+        if isinstance(node.op, ast.Sub):
+            c = dict(a)
+            for k, v in b.items():
+                c[k] = c.get(k, 0) - v
+            return c, ca - cb
+        if isinstance(node.op, ast.Mult):
+            if not a and isinstance(b, dict) and isinstance(ca, int):
+                return {k: v * ca for k, v in b.items()}, 0
+            if not b and isinstance(a, dict) and isinstance(cb, int):
+                return {k: v * cb for k, v in a.items()}, 0
+            return None
+        return None
+    const = _g2_safe_eval(node, base)
+    if const is not None:
+        return {}, const
+    return None
+
+
+def _g2_analyze(src):
+    """Returns dict(rec=..., N=..., M=..., verif=..., enc=...) or None."""
+    import ast
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return None
+    consts = {}
+    rec = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            v = _g2_safe_eval(node.value, consts)
+            if v is not None:
+                consts[node.targets[0].id] = v
+        if isinstance(node, ast.FunctionDef):
+            fname = node.name
+            if not node.args.args:
+                continue
+            argname = node.args.args[0].arg
+            bases = {}
+            final = None
+            ok = True
+            for st in node.body:
+                if isinstance(st, ast.If):
+                    test = st.test
+                    val = None
+                    if isinstance(test, ast.Compare) and len(test.ops) == 1 and isinstance(test.ops[0], ast.Eq):
+                        left, right = test.left, test.comparators[0]
+                        if isinstance(left, ast.Name) and left.id == argname:
+                            val = _g2_safe_eval(right, consts)
+                    if val is not None and len(st.body) == 1 and isinstance(st.body[0], ast.Return):
+                        bases[val] = _g2_safe_eval(st.body[0].value, consts)
+                elif isinstance(st, ast.Return):
+                    res = _g2_extract_linear(st.value, fname, consts, argname)
+                    if res is None:
+                        ok = False
+                    else:
+                        final = res
+            if ok and final and bases and final[0]:
+                rec = dict(name=fname, arg=argname, bases=bases,
+                           coeffs=final[0], const=final[1])
+    if rec is None:
+        return None
+    # resolve call argument N
+    N = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == rec["name"] and node.args:
+            val = _g2_safe_eval(node.args[0], consts)
+            if val is not None:
+                N = val
+    # modulus + verification + encrypted constants
+    M = None
+    verif = None
+    enc = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            name = node.targets[0].id.lower()
+            if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                s = node.value.value
+                if name in ("verif_key", "verify_key", "verif", "expected", "target_hash", "key_hash"):
+                    verif = s.lower()
+                if ("encrypted" in name or name in ("ct", "enc", "flag_enc", "cipher")) and s and all(c in "0123456789abcdefABCDEF" for c in s):
+                    enc = bytes.fromhex(s)
+            elif isinstance(node.value, ast.Call) and getattr(node.value.func, "attr", "") == "fromhex" and node.value.args:
+                if isinstance(node.value.args[0], ast.Constant) and isinstance(node.value.args[0].value, str):
+                    s = node.value.args[0].value
+                    if ("encrypted" in name or name in ("ct", "enc", "flag_enc", "cipher")) and all(c in "0123456789abcdefABCDEF" for c in s):
+                        enc = bytes.fromhex(s)
+            elif name in ("m", "mod", "modulus", "k"):
+                v = _g2_safe_eval(node.value, consts)
+                if v is not None and M is None:
+                    M = v
+    if M is None:
+        for m in re.finditer(r"%\s*\(\s*(10|2)\s*\*\*\s*(\d+)\s*\)|%\s*(M|MOD|MODULUS)\b", src):
+            if m.group(0).startswith("% ("):
+                M = 10 ** int(m.group(2)) if m.group(1) == "10" else 2 ** int(m.group(2))
+            else:
+                M = consts.get(m.group(3).upper()) or consts.get(m.group(3).lower())
+            if M:
+                break
+    return dict(rec=rec, N=N, M=M, verif=verif, enc=enc)
+
+
+def _g2_matrix_pow(mat, e, mod):
+    n = len(mat)
+    def mul(A, B):
+        C = [[0] * n for _ in range(n)]
+        for i in range(n):
+            Ai = A[i]
+            Ci = C[i]
+            for k in range(n):
+                aik = Ai[k]
+                if aik:
+                    Bk = B[k]
+                    for j in range(n):
+                        Ci[j] = (Ci[j] + aik * Bk[j]) % mod
+        return C
+    R = [[1 if i == j else 0 for j in range(n)] for i in range(n)]
+    while e:
+        if e & 1:
+            R = mul(R, mat)
+        mat = mul(mat, mat)
+        e >>= 1
+    return R
+
+
+def _g2_recurrence(rec, N, M):
+    """Return f(N) mod M. rec: name, bases {i:val}, coeffs {offset:coef}, const."""
+    k = max(rec["coeffs"].keys())
+    if N < 0:
+        return None
+    vals = [rec["bases"].get(i, 0) for i in range(k)]
+    if N < k:
+        return vals[N] % M
+    # state vector S_t = [f(t), f(t-1), ..., f(t-k+1), 1]
+    dim = k + 1
+    T = [[0] * dim for _ in range(dim)]
+    for d, c in rec["coeffs"].items():
+        T[0][d - 1] = c % M
+    for i in range(1, k):
+        T[i][i - 1] = 1
+    T[0][k] = rec["const"] % M
+    T[k][k] = 1
+    P = _g2_matrix_pow(T, N - k + 1, M)
+    v = [0] * dim
+    for i in range(k):
+        v[i] = vals[k - 1 - i] % M
+    v[k] = 1
+    return sum(P[0][j] * v[j] for j in range(dim)) % M
+
+
+def _g2_hash_candidates(secret):
+    import hashlib
+    forms = []
+    s = str(secret)
+    forms.append(s.encode())
+    forms.append(secret.to_bytes((secret.bit_length() + 7) // 8, "big"))
+    forms.append(format(secret, "x").encode())
+    digs = []
+    for b in dict.fromkeys(forms):
+        for name in ("md5", "sha1", "sha256", "sha512", "blake2b"):
+            h = getattr(hashlib, name)(b).digest()
+            digs.append((name, b, h))
+    return digs
+
+
+@solver("linear-recurrence-hash-xor", lambda fp: .94 if fp["charset"] == "ascii-text" and (
+    re.search(r"\bfunctools\.cache\b", fp.get("_text", "")) or
+    re.search(r"\bdef\s+\w+\((\w+)\):\s*(?s).*?return", fp.get("_text", ""))) and
+    re.search(r"10\s*\*\*\s*10000|2e7|2\s*\*\s*10\s*\*\s*7|VERIF_KEY|ENCRYPTED_FLAG",
+              fp.get("_text", "")) else 0.0)
+def solve_linear_recurrence(data, ctx):
+    try:
+        src = data.decode("utf-8")
+    except Exception:
+        return
+    info = _g2_analyze(src)
+    import os as _os
+    if _os.environ.get("G2_DEBUG") == "1":
+        print("G2 info", info and (info["N"], bool(info["M"]), bool(info["verif"]), len(info.get("enc") or b"")), flush=True)
+    if info is None or info["N"] is None:
+        return
+    M = info["M"]
+    verif = info["verif"]
+    enc = info["enc"]
+    if M is None:
+        # only exact value when cheap (<= 1e6 digits estimated by N size)
+        if info["N"] <= 10**6:
+            M = None
+        else:
+            ctx.findings.append("linear-recurrence: no modulus resolvable; skipping large N")
+            return
+    try:
+        sol = _g2_recurrence(info["rec"], info["N"], M) if M is not None else None
+        if M is None:
+            # naive exact for small N
+            rec = info["rec"]
+            k = max(rec["coeffs"].keys())
+            vals = [rec["bases"].get(i, 0) for i in range(k)]
+            for i in range(k, info["N"] + 1):
+                vals.append(sum(rec["coeffs"].get(d, 0) * vals[i - d] for d in rec["coeffs"])
+                           + rec["const"])
+            sol = vals[info["N"]]
+    except Exception:
+        return
+    if sol is None:
+        return
+    import os as _os
+    if _os.environ.get("G2_DEBUG") == "1":
+        print("G2 sol digits", len(str(sol)), "verif", verif, "enc", len(enc or b""), flush=True)
+    if enc is None:
+        # scan again for any long hex constant not labeled
+        for m in re.finditer(r"['\"]([0-9a-fA-F]{32,})['\"]", src):
+            enc = bytes.fromhex(m.group(1))
+            if len(enc) >= 8:
+                break
+    if enc is None:
+        return
+    import hashlib
+    verified_fallback = None
+    for name, form, digest in _g2_hash_candidates(sol):
+        hexd = digest.hex()
+        if verif and hexd != verif:
+            continue
+        key_cands = {digest, hexd.encode()}
+        if verif and hexd == verif:
+            for kname in ("md5", "sha1", "sha256", "sha512", "blake2b"):
+                d2 = getattr(hashlib, kname)(form).digest()
+                key_cands.add(d2)
+                key_cands.add(d2.hex().encode())
+        for key in key_cands:
+            if not key:
+                continue
+            out = bytes(c ^ key[i % len(key)] for i, c in enumerate(enc))
+            pr = sum(32 <= b < 127 or b in (9, 10, 13) for b in out) / max(1, len(out))
+            if verif and hexd == verif and verified_fallback is None:
+                verified_fallback = out
+            if pr >= 0.9:
+                yield out, "Cracked linear-recurrence + hash-xor", {"hash": name}, .99
+                return
+    if verified_fallback is not None:
+        yield verified_fallback, "Cracked linear-recurrence + hash-xor", {"hash": "verified"}, .99
+        return
+def _dlp_parse_ints(text):
+    v = {}
+    for m in re.finditer(r"(?m)^\s*([A-Za-z_]\w*)\s*=\s*([0-9a-fA-Fx_]+)\s*$", text):
+        k, raw = m.group(1).lower(), m.group(2)
+        try:
+            if raw.lower().startswith("0x"):
+                num = int(raw, 16)
+            elif re.search(r"[a-fA-F]", raw):
+                num = int(raw, 16)
+            else:
+                num = int(raw, 10)
+        except ValueError:
+            num = None
+        if num is not None:
+            v.setdefault(k.rstrip("0123456789"), num)
+    return v
+
+
+def _pm1_with_checkpoints(n, B, ctx):
+    """Pollard p-1 with checkpoint/backtrack when gcd == n (both p-1 and
+    q-1 are B-smooth). Returns a nontrivial factor or None."""
+    import math
+    sieve = bytearray(b"\x01") * (B + 1)
+    sieve[0] = sieve[1] = 0
+    for i in range(2, int(B ** 0.5) + 1):
+        if sieve[i]:
+            sieve[i * i::i] = bytearray(len(sieve[i * i::i]))
+    primes = [i for i in range(2, B + 1) if sieve[i]]
+    a = 2
+    block = []
+    a_at_block = 2
+    for q in primes:
+        e = 1
+        while q ** (e + 1) <= B:
+            e += 1
+        block.append(q ** e)
+        if len(block) == 32:
+            a_at_block = a
+            for pe in block:
+                if ctx.expired():
+                    return None
+                a = pow(a, pe, n)
+            g = math.gcd(a - 1, n)
+            if 1 < g < n:
+                return g
+            if g == n:
+                a = a_at_block
+                for pe in block:
+                    if ctx.expired():
+                        return None
+                    a = pow(a, pe, n)
+                    g = math.gcd(a - 1, n)
+                    if 1 < g < n:
+                        return g
+                return None
+            block = []
+    for pe in block:
+        if ctx.expired():
+            return None
+        a = pow(a, pe, n)
+    g = math.gcd(a - 1, n)
+    return g if 1 < g < n else None
+
+
+def _bsgs_small(g, h, p, order):
+    m = math.isqrt(order) + 1
+    tbl, cur = {}, 1
+    for j in range(m):
+        tbl.setdefault(cur, j)
+        cur = cur * g % p
+    f, gi = h % p, pow(g, -m, p)
+    for i in range(m + 1):
+        if f in tbl:
+            return (i * m + tbl[f]) % order
+        f = f * gi % p
+    return None
+
+
+def _crt_gen(residues, moduli):
+    """Generalized CRT over pairwise non-coprime moduli. Returns x or None."""
+    x, M = 0, 1
+    for a, m in zip(residues, moduli):
+        g = math.gcd(M, m)
+        if (a - x) % g:
+            return None
+        # solve M/g * t ≡ (a-x)/g (mod m/g)
+        a2, b2, m2 = M // g, (a - x) // g, m // g
+        inv = pow(a2, -1, m2)
+        t = (b2 * inv) % m2
+        x += M * t
+        M = M // g * m
+    return x % M
+
+
+_SMOOTH_PRIMES_CACHE = None
+
+
+def _smooth_primes(B=300000):
+    global _SMOOTH_PRIMES_CACHE
+    if _SMOOTH_PRIMES_CACHE is not None:
+        return _SMOOTH_PRIMES_CACHE
+    sieve = bytearray(b"\x01") * (B + 1)
+    sieve[0] = sieve[1] = 0
+    for i in range(2, int(B ** 0.5) + 1):
+        if sieve[i]:
+            sieve[i * i::i] = bytearray(len(sieve[i * i::i]))
+    _SMOOTH_PRIMES_CACHE = [i for i in range(2, B + 1) if sieve[i]]
+    return _SMOOTH_PRIMES_CACHE
+
+
+def _factor_smooth(x, ctx):
+    """Factor x assuming all prime factors <= 300000 (smooth). Returns dict."""
+    out = {}
+    for q in _smooth_primes():
+        if ctx.expired():
+            return out
+        if q * q > x:
+            break
+        if x % q == 0:
+            e = 0
+            while x % q == 0:
+                x //= q
+                e += 1
+            out[q] = e
+    if x > 1:
+        out[x] = 1
+    return out
+
+
+def _ph_dlp_prime(g, h, r, ctx):
+    """Solve g^x = h mod r given r-1 smooth-ish; returns x mod ord_r(g) or None."""
+    o = r - 1
+    fa = _factor_smooth(o, ctx)
+    if not fa:
+        return None
+    ordg = o
+    for q, e in fa.items():
+        while ordg % q == 0 and pow(g, ordg // q, r) == 1:
+            ordg //= q
+    rem, mod = [], []
+    for q, e in _factor_smooth(ordg, ctx).items():
+        qe = q ** e
+        gi = pow(g, ordg // qe, r)
+        hi = pow(h, ordg // qe, r)
+        x0 = 0
+        gamma = pow(gi, q ** (e - 1), r)
+        for i in range(e):
+            hk = pow(pow(gi, -x0, r) * hi % r, q ** (e - 1 - i), r)
+            d = _bsgs_small(gamma, hk, r, q)
+            if d is None:
+                return None
+            x0 += d * q ** i
+        rem.append(x0)
+        mod.append(qe)
+    if not rem:
+        return None
+    from solvers import _crt
+    x = _crt(rem, mod)
+    if x is not None and pow(g, x, r) == h % r:
+        return x % ordg
+    return None
+
+
+@solver("dlp-composite-smooth", lambda fp: .92 if fp["charset"] == "ascii-text" and re.search(
+    r"(?m)^\s*dlp_secret\s*=\s*1\s*$", fp.get("_text", "")) else (
+     .55 if fp["charset"] == "ascii-text" and
+     re.search(r"(?m)^\s*n\s*=\s*\d", fp.get("_text", "")) and
+     re.search(r"(?m)^\s*c\s*=\s*\d", fp.get("_text", "")) and
+     re.search(r"(?m)^\s*g\s*=\s*\d", fp.get("_text", "")) else 0.0))
+def solve_dlp_composite_smooth(data, ctx):
+    try:
+        text = data.decode("ascii")
+    except Exception:
+        return
+    v = _dlp_parse_ints(text)
+    n = v.get("n")
+    c = v.get("c", v.get("ct"))
+    g = v.get("g")
+    if not n or c is None:
+        return
+    from solvers_more import _is_prime
+    if _is_prime(n):
+        return
+    if g is None:
+        base_hyp = [2, 3, 5, 7, 11, 13]
+    else:
+        base_hyp = [g]
+    from solvers_more import factor_all
+    factor = None
+    _ladder_start = time.monotonic()
+    for B in (4096, 16384, 65536, 131072, 262144):
+        if ctx.expired() or time.monotonic() - _ladder_start > 8.0:
+            break
+        factor = _pm1_with_checkpoints(n, B, ctx)
+        if factor:
+            break
+    if not factor:
+        fa = factor_all(n, ctx)
+        if fa:
+            factor = next(iter(fa))
+    if not factor:
+        return
+    primes = [factor]
+    rem = n // factor
+    if _is_prime(rem):
+        primes.append(rem)
+    elif rem > 1:
+        fa2 = factor_all(rem, ctx)
+        if fa2:
+            primes.extend(fa2)
+    for base in base_hyp:
+        rems, mods = [], []
+        for r in primes:
+            xr = _ph_dlp_prime(base % r, c % r, r, ctx)
+            if xr is None:
+                continue
+            rems.append(xr)
+            mods.append(r - 1)
+        if not rems:
+            continue
+        x = _crt_gen(rems, mods)
+        if x is not None and pow(base, x, n) == c % n:
+            out = x.to_bytes((x.bit_length() + 7) // 8, "big")
+            pr = sum(32 <= b < 127 or b in (9, 10, 13) for b in out) / max(1, len(out))
+            if pr >= 0.85:
+                yield out, "Cracked DLP (smooth composite)", {"bits": n.bit_length()}, .99
+                return
+
+
+# -------------------------------------------------- Diffie-Hellman XOR ----
+@solver("diffie-hellman-xor", lambda fp: .90 if fp["charset"] == "ascii-text" and re.search(
+    r"\b(?:g|p|A|B|a|b)\s*=", fp.get("_text", "")) and re.search(
+    r"\benc\s*=", fp.get("_text", "")) else 0.0)
+def solve_dh_xor(data, ctx):
+    """Diffie-Hellman key-exchange with XOR encryption.
+
+    Expects the data (or ctx.rsa_params / message text) to carry the DH
+    parameters g, p, A (or B), plus the private exponent b (or a) and the
+    ciphertext enc.  The shared secret is computed and XOR-tried with:
+      • every individual byte of the secret (cycling)
+      • sha256 / sha1 / md5 digests of the secret bytes
+      • the secret integer mod 256 (common CTF shortcut)
+    """
+    import hashlib as _hashlib
+
+    text = data.decode("ascii", "ignore")
+
+    def _grab(pattern, src):
+        m = re.search(pattern, src, re.I | re.S)
+        return m.group(1).strip() if m else None
+
+    def _parse(s):
+        if s is None:
+            return None
+        s = re.sub(r"\s+", "", s).replace("_", "").replace(",", "")
+        try:
+            return int(s, 16) if s.lower().startswith("0x") else int(s)
+        except ValueError:
+            return None
+
+    # Numbers may be word-wrapped across lines; stop before the next "name =" token.
+    # Strategy: grab everything up to the next line that starts a new assignment.
+    _UNTIL_NEXT = r"([\dA-Fa-fx][^\n]*(?:\n(?!\w+\s*=)[^\n]*)*)"
+    g_s = _grab(r"\bg\s*=\s*" + _UNTIL_NEXT, text)
+    p_s = _grab(r"\bp\s*=\s*" + _UNTIL_NEXT, text)
+    A_s = _grab(r"\bA\s*=\s*" + _UNTIL_NEXT, text) or _grab(r"\ba\s*=\s*" + _UNTIL_NEXT, text)
+    b_s = _grab(r"\bb\s*=\s*" + _UNTIL_NEXT, text) or _grab(r"\bB\s*=\s*" + _UNTIL_NEXT, text)
+    enc_s = _grab(r"\benc\s*=\s*" + _UNTIL_NEXT, text)
+
+    # Also pull from ctx.rsa_params (reusing the --params mechanism)
+    rp = ctx.rsa_params or {}
+    g = _parse(g_s) or _parse(str(rp.get("g", "")))
+    p = _parse(p_s) or _parse(str(rp.get("p", "")))
+    A = _parse(A_s) or _parse(str(rp.get("a", ""))) or _parse(str(rp.get("A", "")))
+    b = _parse(b_s) or _parse(str(rp.get("b", ""))) or _parse(str(rp.get("B", "")))
+    # Resolve enc: prefer raw hex string (e.g. "0a1b2c"), then 0x-prefixed int.
+    enc_bytes = None
+    _enc_src = enc_s or str(rp.get("enc", ""))
+    if _enc_src:
+        _raw = re.sub(r"\s+", "", _enc_src.strip())
+        if re.fullmatch(r"[0-9a-fA-F]+", _raw) and len(_raw) % 2 == 0:
+            try:
+                enc_bytes = bytes.fromhex(_raw)
+            except ValueError:
+                pass
+        if enc_bytes is None:
+            _v = _parse(_enc_src)
+            if _v is not None:
+                enc_bytes = _v.to_bytes((_v.bit_length() + 7) // 8, "big")
+
+    # Generic: any "name = number" assignment is a candidate public/private
+    # value, so naming (a/A/B/priv/pub/...) and role order never matter.
+    nums = {}
+    for name, val in re.findall(r"^\s*(\w+)\s*[=:]\s*((?:0x)?[0-9a-fA-F]+(?:\s*\n(?!\s*\w+\s*[=:])[0-9a-fA-F]+)*)\s*$",
+                                text, re.M):
+        if name.lower() in ("enc", "ct", "c", "cipher", "ciphertext", "flag"):
+            continue
+        v = _parse(val)
+        if v is not None:
+            nums.setdefault(name, v)
+    p = p or nums.get("p")
+    g = g or nums.get("g")
+    if not p or not enc_bytes:
+        return
+    pool = [v for k, v in nums.items() if k.lower() not in ("g", "p") and 1 < v < p]
+    for v in (A, b):
+        if v and v not in pool and 1 < v < p:
+            pool.append(v)
+    shared_vals = []
+    for x in pool:            # x = public, y = private; try every ordered pair
+        for y in pool:
+            if x != y:
+                try:
+                    shared_vals.append(pow(x, y, p))
+                except Exception:
+                    pass
+    # A pair whose g**y equals another value is the true (private, public) link.
+    if g:
+        linked = [pow(x, y, p) for x in pool for y in pool
+                  if x != y and pow(g, y, p) in pool and pow(g, y, p) != x]
+        shared_vals = linked + [s_ for s_ in shared_vals if s_ not in linked]
+    shared_vals = list(dict.fromkeys(shared_vals))[:12]
+    if not shared_vals:
+        return
+
+    n = len(enc_bytes)
+    # Tier 0: canonical derivations, in priority order (earlier = more common).
+    # Tier 1: "any single byte of the secret" -- only used if tier 0 finds nothing,
+    # because near-miss single-byte keys also give printable text (small XOR deltas).
+    tier0, tier1 = [], []
+    for si, shared in enumerate(shared_vals):
+        sb = shared.to_bytes((shared.bit_length() + 7) // 8 or 1, "big")
+        tier0 += [bytes([shared % 256]), bytes([sb[0]])]
+        for raw in (sb, str(shared).encode(), sb[::-1], hex(shared)[2:].encode()):
+            tier0.append(raw)
+            for h in (_hashlib.sha256, _hashlib.md5, _hashlib.sha1, _hashlib.sha512):
+                tier0.append(h(raw).digest())
+        tier0 += [sb[:n], sb[-n:]]
+        tier1 += [bytes([kb]) for kb in dict.fromkeys(sb)]
+    tier0 = list(dict.fromkeys(tier0))
+    tier1 = [k for k in dict.fromkeys(tier1) if k not in tier0]
+
+    # No flag-format or language assumptions. A wrong key gives all-printable
+    # ASCII with probability ~(95/256)^n, so N candidates have false-positive
+    # odds of about N * 0.371^n; confidence is 1 - that, minus a tiny
+    # penalty for lower-priority derivations so ties resolve canonically.
+    def run(tier):
+        p_false = len(tier) * (95 / 256) ** n
+        seen, out = set(), []
+        for order, key in enumerate(tier):
+            if ctx.expired():
+                break
+            plain = bytes(c ^ key[i % len(key)] for i, c in enumerate(enc_bytes))
+            if plain in seen:
+                continue
+            seen.add(plain)
+            if not all(32 <= c < 127 or c in (9, 10, 13) for c in plain):
+                continue
+            score = max(0.0, 1.0 - p_false) - .0005 * order
+            if score >= .5:
+                out.append((plain, key, score))
+        return out
+
+    found = run(tier0) or run(tier1)
+    for plain, key, score in found[:5]:
+        yield plain, "Diffie-Hellman XOR", {
+            "g": g, "p_bits": p.bit_length(), "key_byte": key[0], "_statistical": True
+        }, score
