@@ -1,0 +1,35 @@
+things autocrypt can't solve (yet) — live tracker
+==================================================
+Updated: 2026-11-05 (after E3 15/15 + regression sweep)
+
+This file tracks inputs/challenges the auto-solver does not yet solve to a
+rank-#0 flag recovery. When a case starts passing, move it to LOGS.md's
+"resolved" notes and delete it here. Keep this list truthful and current.
+
+E3 realistic CTF pairs (fixtures/e3/, harness test_e3.py)
+---------------------------------------------------------
+Result: 15/15 PASS at rank 0 (all recovered). The previous three failures
+(c01, c08, c14) were fixed 2026-11-05:
+
+* c01 — academy{b64_hex_rot13_l4y3r}: new `hex+rot13` solver restores
+  ROT13-rotated hex letters (n..s -> a..f), chains through hex->base64.
+* c08 — academy{reverse_b64_caesar_cust0m}: base64 fingerprint/decoder now
+  strip a leading "<name> = " label prefix, and a caesar-shift fallback
+  recovers the `caesar(b64)` layer.
+* c14 — academy{lfsr_keystream_crib}: new `hint-keystream-xor` solver XORs
+  the labeled keystream with the ciphertext.
+
+These are now resolved; see LOGS.md for details. No E3 case remains unsolved.
+
+Known limits (design documented in README "Known limits")
+---------------------------------------------------------
+- Modern authenticated encryption / large-RSA general factoring: out of scope.
+- 4-5-byte repeating-key XOR over ~20-char flags is inherently ambiguous; the
+  xorfamily target is 7/10 accepted (rest are honest non-solves).
+- Source-hint propagation beyond the current static AST extraction is a planned
+  expansion (e.g. key material hidden in non-print expressions).
+
+Process note
+------------
+- Re-run `python3 test_e3.py` after each change and update this list.
+- When the next unresolved case appears, add it here with a root-cause note.

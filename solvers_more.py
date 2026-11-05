@@ -680,7 +680,13 @@ def solve_related(data, ctx):
                 pl = S._int_plain(m)
                 if assess(pl)[0] > .2 or sum(32 <= x < 127 for x in pl) >= .9 * len(pl):
                     # both messages are recovered; the leaked difference links them
-                    for mm, nm in ((m - dd, "fixed"), (m, "original")):
+                    # core.py breaks after the FIRST `recovered` yield of a solver,
+                    # so order matters: the original message m (whose ciphertext is
+                    # c1 = m^e) is the one the challenge encrypted as the flag; the
+                    # "fixed" sibling m-dd is derived. Yield m first so it survives
+                    # the break (seen on E3 c11 where only the wrong sibling was
+                    # surfaced).
+                    for mm, nm in ((m, "original"), (m - dd, "fixed")):
                         if mm > 0:
                             yield S._int_plain(mm), f"RSA Franklin-Reiter related message {nm} (e={e})", {}, .95
                     return

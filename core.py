@@ -296,11 +296,23 @@ def fingerprint(data: bytes) -> dict:
                        if re.fullmatch(r"(?:0x)?[0-9a-fA-F]{1,2}", t)]
             if len(_sep) >= 8 and len(hex_tok) >= 0.7 * len(_sep):
                 classes.append("hex")
-        if re.fullmatch(r"[A-Za-z0-9+/]*={0,2}\s*", text) and len(compact) % 4 == 0:
+        # Base64 detection must tolerate a leading "<name> = " label prefix
+        # (e.g. "ct = <base64>"), which otherwise fails the alphabet and mod-4
+        # checks so the payload is never handed to the decoder. Compute a
+        # label-stripped view and accept either the original or the stripped
+        # form (the original is checked first, so existing inputs are unchanged).
+        _nolabel = re.sub(r"^[A-Za-z_]\w*\s*=\s*", "", text)
+        _compact_nolabel = re.sub(r"\s+", "", _nolabel)
+        _b64_full = (re.fullmatch(r"[A-Za-z0-9+/]*={0,2}\s*", text)
+                      and len(compact) % 4 == 0)
+        _b64_stripped = (_nolabel != text
+                          and re.fullmatch(r"[A-Za-z0-9+/]*={0,2}\s*", _nolabel)
+                          and len(_compact_nolabel) % 4 == 0)
+        if _b64_full or _b64_stripped:
             classes.append("base64")
         if re.fullmatch(r"[A-Z2-7]+=*\s*", text.upper()) and len(compact) >= 8:
             classes.append("base32")
-        if re.fullmatch(r"[A-Za-z0-9+/]*={0,2}\s*", text) and "+" not in text and "/" not in text:
+        if (_b64_full or _b64_stripped) and "+" not in _nolabel and "/" not in _nolabel:
             classes.append("base64url")
         if re.fullmatch(r"[A-Za-z0-9]+", compact) and len(compact) >= 8:
             classes.append("base58/base62")

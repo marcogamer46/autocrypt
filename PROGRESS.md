@@ -124,3 +124,27 @@
 - Labeled-line whitelist + hex_labels + all-letter token filter (0x10001 / banner-word fixes).
 - New family test_e4.py 10/10 rank #0 <0.5s.
 - run_tests full regression green.
+
+## Session 10 (2026-11-05) — E3 to 15/15: c01/c08/c11/c14 fixed
+
+- c11 Franklin-Reiter: `core.py` breaks after the first `recovered` yield of a
+  solver, so `solve_related` (solvers_more.py) yielded its "fixed" sibling
+  (junk) before the "original" message (the real flag). Reordered to yield
+  original-first; the flag now survives the break. E3 c11 rank #0.
+- c01: new `hex+rot13` solver (solvers.py) — restores ROT13-rotated hex
+  letters (n..s → a..f) from even ≥16-char runs, emits the restored hex string
+  so the existing hex → base64 layers chain on. E3 c01 rank #0.
+- c08: base64 label-prefix tolerance in `core.fingerprint` + `solve_base64`
+  (strip a leading `<name> = ` before the alphabet / mod-4 checks; original is
+  always tried first so existing inputs are unchanged), plus a caesar-shift
+  fallback that recovers a `caesar(b64)` layer when the direct decode is
+  opaque (non-text). E3 c08 rank #0.
+- c14: new `hint-keystream-xor` solver (solvers.py) — when the challenge emits
+  both a `keystream_hex=`/`keystream=` and a `ct=` label, it XORs the
+  keystream with the ciphertext. Prior 0 unless both markers present. E3 c14
+  rank #0.
+- E3 harness now 15/15 PASS, all rank #0, within budget.
+- Regressions: run_tests 43/43; test_matrix --both 22/22; fuzz 12/12;
+  test_multijob 38/38 equal. No collateral failures.
+- Created `things_it_cant_solve.txt` tracker (mutated c01/c08/c14; lists the
+  remaining documented known limits).

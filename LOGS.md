@@ -236,3 +236,15 @@ All work performed on 2026-10-31 (single continuous engagement).
 - Fixed a latent bug: `--verbose` exact-time print referenced undefined `_search_t0` (now `ctx.search_t0`).
 - New `test_e7.py` (4 checks): `--fast` and `--deep` each recover a base64 flag; `--fast --json` emits chain; `--fast --deep` coexist. 4/4 PASS.
 - `--fast` on the base64 flag: 0.45s vs 0.42s deep — both trivial for a decode-first challenge; the flag matters on slow brute-force cases (dlp/hash/hill/enigma), where fast mode skips them entirely.
+
+## Session 12 — E3 15/15: c01/c08/c11/c14 fixed
+
+| Step | What changed | Files | Verified |
+|------|--------------|-------|----------|
+| E3-c11 | `solve_related` yields "original" (m, the true flag) before "fixed" (m−dd); core.py's post-`recovered` break was truncating the generator after the first yield, dropping the flag. | solvers_more.py | c11 rank #0 `academy{franklin_reiter_related}` |
+| E3-c01 | New `hex+rot13` solver: ROT13-rotated hex letters n..s → a..f in even ≥16-char runs; emits restored hex so `hex → base64` layers chain. Prior 0.3, narrow (only fires on c01 output). | solvers.py | c01 rank #0 `academy{b64_hex_rot13_l4y3r}` |
+| E3-c08 | base64 fingerprint/decoder tolerate a leading `<name> = ` label (stripped view as fallback; original checked first). Plus caesar-shift fallback recovers `ct = caesar(b64)` when direct decode is opaque. | core.py, solvers.py | c08 rank #0 `academy{reverse_b64_caesar_cust0m}` |
+| E3-c14 | New `hint-keystream-xor` solver: XORs labeled `keystream_hex=`/`ct=` values; prior 0 unless both markers present. | solvers.py | c14 rank #0 `academy{lfsr_keystream_crib}` |
+| Docs | Created `things_it_cant_solve.txt` live tracker (resolved c01/c08/c14; documented known limits). | things_it_cant_solve.txt | — |
+
+Final verification: run_tests 43/43, matrix 22/22, fuzz 12/12, multijob 38/38, E3 15/15.

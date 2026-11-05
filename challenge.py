@@ -67,6 +67,27 @@ def _number(node):
 
 _STR_BYTES_HINT_NAMES = {"key", "secret", "password", "salt"}
 
+# Labeled-line extraction whitelist: `name = value` output lines whose name is
+# a recognized crypto-parameter label are accepted as labeled data even when the
+# source didn't print them via a Name expression (e.g. `print('e1 =', 65537)`
+# yields a generic 'x' label, but the output line "e1 = 65537" still carries the
+# semantic name). Keep this broad — extra labels are harmless, missing ones
+# silently break a solver (E3 c09/c11/c14).
+_LABEL_WHITELIST = {
+    # RSA / modular arithmetic
+    "n", "modulus", "p", "q", "phi", "d", "dp", "dq", "e", "e1", "e2",
+    "e3", "c", "ct", "c1", "c2", "c3", "ct1", "ct2", "ciphertext",
+    "cipher", "enc", "encrypted", "msg", "message", "m", "x", "y", "r",
+    "challenge", "proof", "sig", "signature",
+    # DH / DLP / ECC
+    "g", "a", "b", "diff", "A", "B", "p1", "p2", "rand", "nonce", "iv",
+    "salt",
+    "pub", "priv", "private", "public",
+    # stream ciphers / hashes
+    "key", "keystream", "keystream_hex", "stream", "otp", "ks", "hash",
+    "digest", "password", "secret", "seed",
+}
+
 
 def analyze_source(src: str):
     """Returns (constants, print_labels, findings, hex_labels, dlp_hint, byte_hints).
@@ -250,9 +271,7 @@ def load(paths):
         # Accept the built-in whitelist OR any name the source actually prints as
         # a data label (e.g. n1/n2/n3/c3 in a broadcast). For standalone .txt
         # inputs labels is empty, so behavior is unchanged.
-        if k in ("n", "modulus", "c", "ct", "c1", "c2", "ciphertext", "enc",
-                 "msg", "message", "g", "m", "p", "q", "s", "e", "x", "secret") \
-                or k in known_labels:
+        if k in _LABEL_WHITELIST or k in known_labels:
             # A value the source formats as hex (e.g. f"{e:x}") is hex even
             # when it happens to contain only digits (0x10001 -> "10001").
             is_hex = (raw.lower().startswith("0x")
@@ -312,7 +331,16 @@ def load(paths):
         lines.append(f"g={dlp_hint['g']}")
         lines.append("dlp_secret=1")
     if lines:
-        return ("\n".join(lines + hint_lines) + "\n").encode(), findings, src
+        payload = "\n".join(lines + hint_lines)
+        # If the printable output contains alphabetic content outside the hex
+        # alphabet (after `name = ` prefix removal), a printed value is a
+        # non-numeric string (classical ciphertext, base64, ...) that numeric
+        # token extraction can't capture — keep the original output blob
+        # alongside so the real ciphertext isn't silently dropped (seen on
+        # E3 c02/c03 where only stray digits inside the flag body survived).
+        if re.search(r"[g-zG-Z]", stripped):
+            payload = data.decode("utf-8", "replace").rstrip("\n") + "\n" + payload
+        return (payload + "\n").encode(), findings, src
     if hint_lines:
         tail = ("\n" + "\n".join(hint_lines)).encode()
         return (data or src.encode()) + tail, findings, src

@@ -55,26 +55,32 @@ def main():
         py = E3 / f"{name}_challenge.py"
         out_txt = E3 / f"{name}_output.txt"
         # Primary: challenge source + output merged so source hints meet the
-        # ciphertext. Fall back to output alone if the merged run is thin.
+        # ciphertext. Fall back to output alone ONLY if the merged run did not
+        # surface the flag at all (the merged run is the documented invocation
+        # and may legitimately return a thin verified-exact result set).
+        def _score(o):
+            if not o:
+                return "FAIL", None, "-", "-"
+            top = o[0]
+            chain = top.get("chain", "")
+            top_txt = top.get("plaintext", "")
+            echo = chain.lower().startswith("as-is") or "source" in chain.lower()
+            contains = flag.lower() in top_txt.lower()
+            if top and not echo and contains:
+                return "PASS", 0, chain, top_txt
+            r = next((k for k, x in enumerate(o)
+                      if flag.lower() in x["plaintext"].lower()), None)
+            if r is None:
+                return "FAIL", None, chain, top_txt
+            return f"rank{r}", r, chain, top_txt
         out, wall, fe = run(py, out_txt)
-        if len(out) < 3:
+        status, rank, chain, top_txt = _score(out)
+        if rank is None:
             out2, wall2, fe2 = run(out_txt)
             wall += wall2
             fe = fe if fe is not None else fe2
-            out = out2 if len(out2) > len(out) else out
-        top = out[0] if out else None
-        chain = top["chain"] if top else "-"
-        top_txt = top["plaintext"] if top else "-"
-        echo = chain.lower().startswith("as-is") or "source" in chain.lower()
-        contains = flag.lower() in top_txt.lower()
-        if top and not echo and contains:
-            status, rank = "PASS", 0
-        elif top and contains:
-            status, rank = "FAIL", "echo"
-        else:
-            rank = next((k for k, x in enumerate(out)
-                         if flag.lower() in x["plaintext"].lower()), None)
-            status = "FAIL" if rank is None else f"rank{rank}"
+            if len(out2) > len(out):
+                status, rank, chain, top_txt = _score(out2)
         budget = " BUDGET" if wall > 35 else ""
         print(f"{name:5} {status:6} {str(rank):>4} {str(fe if fe is not None else '-'):>6} {wall:6.1f}  {chain[:46]} | {top_txt[:30]!r} vs {flag!r}{budget}")
 

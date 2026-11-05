@@ -151,6 +151,59 @@ def solve_hex_in_text(data, ctx):
             yield out, "hex-in-text", {"start": m.start()}, assess(out)[0]
 
 
+_HEX_ROT13_RE = re.compile(r"[0-9nopqrs]+")
+_ROT13_HEX_TBL = str.maketrans("nopqrs", "abcdef")
+
+
+def _hex_rot13_prior(fp):
+    """Fires when the data is a long hex+ROT13 stream: runs of `[0-9nopqrs]`
+    (even length >= 16) with at least one ROT13-rotated hex letter n..s, and
+    little else in the buffer."""
+    text = fp.get("_text", "")
+    if len(text) < 16:
+        return 0.0
+    runs = [r for r in _HEX_ROT13_RE.findall(text)
+            if len(r) >= 16 and len(r) % 2 == 0 and re.search(r"[nopqrs]", r)]
+    if not runs:
+        return 0.0
+    engaged = sum(len(r) for r in runs)
+    if engaged / len(text) < 0.35:
+        return 0.0
+    return 0.3
+
+
+@solver("hex+rot13", _hex_rot13_prior)
+def solve_hex_rot13(data, ctx):
+    """Recover hex digits whose letters were ROT13-rotated into n..s
+    (ROT13 maps a<->n ... f<->s, so n->a ... s->f). Yields the restored hex
+    string so the existing hex->base64 layers chain on, and also the directly
+    decoded bytes as a shorter alternative path."""
+    try:
+        text = data.decode("ascii")
+    except UnicodeDecodeError:
+        return
+    seen = set()
+    for m in re.finditer(r"(?<![0-9nopqrs])[0-9nopqrs]{16,}(?![0-9nopqrs])", text):
+        tok = m.group(0)
+        if len(tok) % 2:
+            continue
+        restored = tok.translate(_ROT13_HEX_TBL)
+        try:
+            out = bytes.fromhex(restored)
+        except ValueError:
+            continue
+        if not out or out in seen:
+            continue
+        seen.add(out)
+        pr = sum(32 <= b < 127 or b in (9, 10, 13) for b in out) / len(out)
+        params = {"_statistical": True}
+        # Restored hex string (chains through the standard hex layer).
+        yield restored.encode("ascii"), "hex+rot13", dict(params), .75
+        # Direct decode of the restored hex (skips the hex hop).
+        if pr >= 0.9:
+            yield out, "hex+rot13", dict(params), .8
+
+
 @solver("base32", lambda fp: _prior(fp, "base32"))
 def solve_base32(data, ctx):
     try:
@@ -164,15 +217,47 @@ def solve_base32(data, ctx):
 
 @solver("base64", lambda fp: max(_prior(fp, "base64"), _prior(fp, "base64url")))
 def solve_base64(data, ctx):
-    raw = re.sub(rb"\s+", b"", data)
-    for url in (False, True):
-        try:
-            padded = raw + b"=" * ((-len(raw)) % 4)
-            out = base64.urlsafe_b64decode(padded) if url else base64.b64decode(padded, validate=True)
-            if out and (url == (b"-" in raw or b"_" in raw) or not url):
-                yield from _emit(ctx, out, "base64url" if url else "base64")
-        except (binascii.Error, ValueError):
-            continue
+    blobs = [data]
+    # Tolerate a leading "<name> = " assignment label before the payload
+    # (e.g. "ct = <base64>"), which otherwise breaks the alphabet/length
+    # checks. The un-prefixed buffer is always tried first, so existing
+    # inputs are unaffected; the stripped form is only a fallback.
+    m = re.match(rb"^[A-Za-z_]\w*\s*=\s*", data)
+    if m:
+        blobs.append(data[m.end():])
+    seen = set()
+    for blob in blobs:
+        raw = re.sub(rb"\s+", b"", blob)
+        for url in (False, True):
+            try:
+                padded = raw + b"=" * ((-len(raw)) % 4)
+                out = base64.urlsafe_b64decode(padded) if url else base64.b64decode(padded, validate=True)
+                if out and (url == (b"-" in raw or b"_" in raw) or not url) and out not in seen:
+                    seen.add(out)
+                    yield from _emit(ctx, out, "base64url" if url else "base64")
+            except (binascii.Error, ValueError):
+                continue
+    # A base64 payload whose direct decode is opaque (non-text) may be a
+    # letter-shifted alphabet (e.g. caesar over base64, as in c08's
+    # ct = caesar(b64)); try each shift and surface any printable decode so
+    # that layer can be undone downstream.
+    if not any(all(32 <= b < 127 or b in (9, 10, 13) for b in o) for o in seen):
+        for blob in blobs:
+            raw = re.sub(rb"\s+", b"", blob)
+            for k in range(1, 26):
+                shifted = bytes(
+                    ((b - 97 - k) % 26 + 97) if 97 <= b <= 122 else
+                    ((b - 65 - k) % 26 + 65) if 65 <= b <= 90 else b
+                    for b in raw)
+                try:
+                    padded = shifted + b"=" * ((-len(shifted)) % 4)
+                    out = base64.b64decode(padded, validate=True)
+                except (binascii.Error, ValueError):
+                    continue
+                if out and all(32 <= b < 127 or b in (9, 10, 13) for b in out) \
+                        and out not in seen:
+                    seen.add(out)
+                    yield out, "base64", {"caesar_shift": -k}, assess(out)[0]
 
 
 _B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
@@ -2889,3 +2974,46 @@ def solve_hint_vigenere(data, ctx):
     if flag_plausibility(plain) > 0 or sc >= .55:
         claimed = .97 if flag_plausibility(plain) > 0 else max(.6, min(.95, sc))
         yield plain, "hint-vigenere", {"key": word.upper(), "_statistical": True}, claimed
+
+
+# -------------------------------------------------- E3 source-hint keystream -
+# challenge.py emits a `keystream_hex=` / `keystream=` label plus the hex
+# ciphertext (`ct=`). When both are present we can recover the plaintext by
+# XORing the keystream with the ciphertext (LFSR / keystream OTP-style).
+# Strictly additive -- without both markers the prior is 0 and it never runs.
+_HINT_KS_RE = re.compile(
+    r"(?m)^\s*(?:keystream_hex|keystream|ks)\s*=\s*0x?([0-9a-fA-F]+)\s*$")
+_HINT_CT_BARE_RE = re.compile(
+    r"(?m)^\s*(?:ct|c|x|cipher)\s*=\s*0x?([0-9a-fA-F]+)\s*$")
+
+
+@solver("hint-keystream-xor", lambda fp: .99 if (
+    _HINT_KS_RE.search(fp.get("_text", ""))
+    and _HINT_CT_BARE_RE.search(fp.get("_text", ""))) else 0.0)
+def solve_hint_keystream_xor(data, ctx):
+    text = data.decode("utf-8", "replace")
+    ksm = _HINT_KS_RE.search(text)
+    ctm = _HINT_CT_BARE_RE.search(text)
+    if not ksm or not ctm:
+        return
+    try:
+        ks = bytes.fromhex(ksm.group(1))
+        enc = bytes.fromhex(ctm.group(1))
+    except ValueError:
+        return
+    if not ks or not enc:
+        return
+    if len(ks) != len(enc):
+        if len(ks) < len(enc):
+            ks = (ks * ((len(enc) + len(ks) - 1) // len(ks)))[:len(enc)]
+        else:
+            ks = ks[:len(enc)]
+    plain = bytes(c ^ ks[i] for i, c in enumerate(enc))
+    if not _printable(plain):
+        return
+    txt = plain.decode("latin-1")
+    sc = _rank_score(txt)
+    pf = flag_plausibility(txt)
+    if pf > 0 or sc >= .55:
+        claimed = .97 if pf > 0 else max(.6, min(.95, sc))
+        yield txt, "hint-keystream-xor", {"source": "keystream ^ ct", "_statistical": True}, claimed
