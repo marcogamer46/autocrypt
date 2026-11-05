@@ -151,6 +151,8 @@ such; the flag is never shipped inside a pair (real challenges read `flag.txt`).
 ## Known limits
 
 - Modern authenticated encryption / large-RSA general factoring are out of scope.
+- Generic semiprimes beyond ~192-bit (where the built-in p−1/p+1/rho/ECM are
+  practical) are not factored; such inputs need an external QS/GNFS tool.
 - 4–5-byte repeating-key XOR over ~20-char flags is inherently ambiguous;
   the family target is 7/10.
 - Source-hint propagation (keys/shifts inside challenge `.py`) is a planned
