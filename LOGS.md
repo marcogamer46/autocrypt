@@ -181,3 +181,58 @@ All work performed on 2026-10-31 (single continuous engagement).
 ### Regression
 - Full suite re-run after changes (40+ rows) — see PROGRESS.
 - New `run_tests.sh` rows: `real_pqsum` (expects real picoCTF Sum-O-Primes flag) and `real_newcaesar` (expects real picoCTF New Caesar flag).
+
+## Session 9 — E4: challenge.py print-label extraction (f-strings, tuples, hex specs)
+
+### Improvements (challenge.py)
+- New `_print_data_args()`: flattens print() arguments so real-world shapes are labeled correctly:
+  - f-string prints (`print(f"n = {n}")`) — the old code saw the whole JoinedStr as one
+    unit and mislabeled it `x1/x2/x3`; now each interpolated FormattedValue is its own
+    label (banner text skipped).
+  - list/tuple prints (`print((n, e, c))`) — collapsed to a single `x` before; now each
+    element yields n/e/c in order.
+  - f-string hex field specs (`print(f"n = {n:x}")`) are detected and marked hex.
+- Expanded the labeled-line whitelist: added `e`, `p`, `q`, `ciphertext`, `enc`,
+  `msg`, `message`, `s` (previously `e`/`p`/`q` lines were dropped unless the source
+  happened to print them in a recognized way).
+- Labeled-line extraction now consults `hex_labels`: a value the source formats as hex
+  (e.g. f"{e:x}") is parsed as hex even when it is all digits (0x10001 -> "10001").
+- Print-order token fallback now ignores all-letter tokens (prose words like
+  "params:" contributed bogus "a" tokens that broke label<->token alignment for tuple
+  prints).
+
+### Verification
+- New family test `test_e4.py` (10 cases across f-string decimal/hex/tuple/banner+tuple
+  print shapes): 0/10 (harness bug: empty output) -> 5/10 -> 10/10, each rank #0 <0.5s.
+- Real Sum-O-Primes (uses print(f'x = {x:x}')) still solves; real multiprime row still
+  solves; full run_tests regression clean.
+
+### LOG
+- debugged: E4 harness initially wrote empty output (fix); f-string hex token count
+  mismatch (fix: hex_labels consult); banner-word tokens in tuple output (fix: digit filter).
+
+## Session 10 — E5: `--explain` flag (plain-English chain explanations)
+
+- New module `explain.py`: maps each layer of a recovery chain (the
+  `" -> "`-joined solver string) to a short human-readable sentence.
+  ~120 method templates covering encodings, ciphers, and RSA/ECC/DLP attacks;
+  unknown solvers fall back to "decoded with X"; long parameter dumps (recovered
+  RSA d/m/primes) are suppressed in favor of the human-readable description.
+- Wired into autocrypt.py: `--explain` prints one indented explanation line
+  under each ranked result's chain.
+- Handles key/param interpolation (shift=7, key=chr(98) -> 'b'); specific
+  messages for RSA p+q leak, RSA factorization, new-Caesar, etc.
+- New test `test_explain.py` (7/7, incl. CLI smoke on real Sum-O-Primes).
+
+## Session 11 — E7: `--fast` / `--deep` flags
+
+- `core.py` Context gains `speed: float = 1.0` and `heavy_names: frozenset`:
+  - per-solver slices scaled by `speed` (45/30/4s × speed);
+  - adaptive 2x extension too (4.0 × speed, etc.);
+  - under `--fast` (`speed=0.5`), solvers named in `heavy_names` are skipped entirely in the search loop.
+- `autocrypt.py`: added `--fast` / `--deep` CLI args, plumbed through `solve_data(... fast=, deep=, max_depth=)` into `search(max_depth=)`:
+  - `--fast` → `speed=0.5`, `heavy_names={dlp-composite-smooth, hill-2x2, enigma-m3, hash-crack, vigenere-brute}` (costly brute-force solvers);
+  - `--deep` → `speed=2.0`, `max_depth=9` (was 6).
+- Fixed a latent bug: `--verbose` exact-time print referenced undefined `_search_t0` (now `ctx.search_t0`).
+- New `test_e7.py` (4 checks): `--fast` and `--deep` each recover a base64 flag; `--fast --json` emits chain; `--fast --deep` coexist. 4/4 PASS.
+- `--fast` on the base64 flag: 0.45s vs 0.42s deep — both trivial for a decode-first challenge; the flag matters on slow brute-force cases (dlp/hash/hill/enigma), where fast mode skips them entirely.

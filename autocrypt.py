@@ -49,20 +49,31 @@ def _load_wordlist(path):
 def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=5,
                known_plaintext="", wordlist_path="", params="", jobs=None,
                progress_callback=None, flag_format_explicit=False, verbose=False,
-               strict=False):
+               strict=False, fast=False, deep=False, max_depth=6):
     """Run the existing fingerprint/search pipeline for both CLI and UI."""
     wordlist = _load_wordlist(wordlist_path)
     fp = fingerprint(data)
     if jobs is None:
         jobs = min(os.cpu_count() or 1, 8)
     jobs = max(1, int(jobs))
+    # --fast: 50% shorter per-solver slices and skip the costly brute-force
+    # solvers; --deep: 2x per-solver slices and a deeper search.
+    speed = 0.5 if fast else (2.0 if deep else 1.0)
+    if fast:
+        heavy = frozenset({"dlp-composite-smooth", "hill-2x2", "enigma-m3",
+                           "hash-crack", "vigenere-brute"})
+    else:
+        heavy = frozenset()
+    if deep:
+        max_depth = 9
     ctx = Context(deadline=time.monotonic() + timeout,
                   flag_regex=re.compile(flag_format, re.DOTALL),
                   flag_regex_explicit=flag_format_explicit,
                   known_plaintext=known_plaintext, wordlist=wordlist,
                   rsa_params=_params(params), assess=assess,
                   progress_callback=progress_callback, jobs=jobs,
-                  strict=strict or bool(os.environ.get("AUTOCRYPT_STRICT")))
+                  strict=strict or bool(os.environ.get("AUTOCRYPT_STRICT")),
+                  speed=speed, heavy_names=heavy)
     ctx.search_t0 = time.monotonic()
     pool = None
     if jobs > 1 and data and len(data) >= 128:
@@ -93,7 +104,7 @@ def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=5,
         res = _exact_res
     else:
         try:
-            res = search(data, ctx, top=top)
+            res = search(data, ctx, top=top, max_depth=max_depth)
         finally:
             if pool is not None:
                 pool.shutdown(wait=False, cancel_futures=True)
@@ -101,7 +112,7 @@ def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=5,
         for name, dt in sorted(ctx.solver_times.items(), key=lambda kv: -kv[1])[:12]:
             print(f"[verbose] solver time {name}: {dt:.2f}s")
         if ctx.exact_found:
-            print(f"[verbose] verified exact at {ctx.exact_time - _search_t0:.2f}s: {ctx.exact_chain}")
+            print(f"[verbose] verified exact at {ctx.exact_time - ctx.search_t0:.2f}s: {ctx.exact_chain}")
     # Hide low-confidence junk: it only misleads. Flags and exact recoveries
     # always stay. Core already floors genuine plaintext at ~0.62, so anything
     # below 0.60 that is not an exact recovery is a weak guess (short-text note,
@@ -138,12 +149,18 @@ def build_parser():
     p.add_argument("-j", "--jobs", type=int, default=None,
                    help="worker processes (default: min(cpu_count,8); 1 = sequential)")
     p.add_argument("--json", action="store_true", help="emit JSON results (all fields) with status/failures")
+    p.add_argument("--explain", action="store_true",
+                   help="print a plain-English explanation of each recovery chain layer")
     p.add_argument("--verbose", action="store_true", help="explain why each candidate was accepted or rejected")
     p.add_argument("--strict", action="store_true",
                    help="fail (non-zero exit, after finishing) on unexpected solver exceptions")
     p.add_argument("--wordlist", help="wordlist for hash and JWT-secret cracking")
     p.add_argument("--known-plaintext", default="", help="known plaintext crib")
     p.add_argument("--params", default="", help='RSA parameters, e.g. "n=...,e=...,c=..."')
+    p.add_argument("--fast", action="store_true",
+                   help="cut time in half: shorter per-solver slices, skip the slowest brute-force solvers")
+    p.add_argument("--deep", action="store_true",
+                   help="2x per-solver time and deeper search (for stubborn challenges)")
     p.add_argument("--no-color", action="store_true", help="disable terminal colors")
     return p
 
@@ -181,6 +198,7 @@ def main(argv=None):
             params=args.params, jobs=args.jobs, flag_format_explicit=any(
                 arg == "--flag-format" or arg.startswith("--flag-format=") for arg in argv),
             verbose=args.verbose, strict=args.strict,
+            fast=args.fast, deep=args.deep,
         )
         if ctx.bug_log:
             for bname, typ, tb in ctx.bug_log:
@@ -248,6 +266,10 @@ def main(argv=None):
         else:
             label = ""
         print(f"\n{i}. {result['chain']}")
+        if args.explain:
+            from explain import explain_chain
+            for _line in explain_chain(result["chain"]):
+                print(f"     └ {_line}")
         if is_flag:
             print(f"   Confidence: {result['confidence']:.2f}{label}")
         else:

@@ -82,6 +82,8 @@ class Context:
     exact_chain: str = ""
     solver_times: dict = field(default_factory=dict)
     grace: float = 1.0
+    speed: float = 1.0      # <1 for --fast (shorter per-solver slices), >1 for --deep
+    heavy_names: frozenset = frozenset()  # solver names to skip under --fast
 
     def expired(self) -> bool:
         return time.monotonic() >= self.deadline
@@ -561,6 +563,10 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
         for prior, item in jobs:
             if ctx.expired():
                 break
+            # --fast: skip the most expensive brute-force solvers; they burn
+            # slices that are better spent on the fast deterministic ones.
+            if ctx.speed < 1 and item.name in ctx.heavy_names:
+                continue
             if item.name == "monoalphabetic-substitution":
                 # Run only on raw input or on the output of a decoder; a
                 # preceding classical step (caesar, affine, ...) is noise.
@@ -589,16 +595,16 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                 if item.name == "dlp-composite-smooth" and re.search(
                         r"(?m)^\s*dlp_secret\s*=\s*1\s*$",
                         fp.get("_text", "")) and not ctx.expired():
-                    ctx.deadline = min(prev_deadline, time.monotonic() + 45.0)
+                    ctx.deadline = min(prev_deadline, time.monotonic() + 45.0 * ctx.speed)
                 elif item.name == "RSA" and re.search(
                         r"\b(?:n|modulus)\s*[:=]\s*(0x[0-9a-f]+|\d+)",
                         fp.get("_text", "")) and not ctx.expired():
                     # Factoring 96-300-bit semiprimes is deterministic work
                     # that can exceed the default 4s slice; give the RSA
                     # solver room (still bounded by the global deadline).
-                    ctx.deadline = min(prev_deadline, time.monotonic() + 30.0)
+                    ctx.deadline = min(prev_deadline, time.monotonic() + 30.0 * ctx.speed)
                 else:
-                    ctx.deadline = min(prev_deadline, time.monotonic() + 4.0)
+                    ctx.deadline = min(prev_deadline, time.monotonic() + 4.0 * ctx.speed)
                 try:
                     if precomp is not None and item.name in precomp:
                         _n, presolved, err = precomp[item.name].result()
@@ -616,16 +622,16 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                 # and the global deadline has room, extend it ONCE by up to
                 # 2x. This keeps deterministic enumeration work from being
                 # cut short just because the machine is momentarily busy.
-                _slice_end = time.monotonic() + 4.0
+                _slice_end = time.monotonic() + 4.0 * ctx.speed
                 _extended = False
                 _n_yields = 0
                 for plain, method, params, claimed_score in yielded:
                     if ctx.expired():
                         now = time.monotonic()
                         if (not _extended and _n_yields > 0
-                                and now >= _slice_end - 2.0
-                                and prev_deadline - now > 4.0):
-                            ctx.deadline = min(prev_deadline, now + 4.0)
+                                and now >= _slice_end - 2.0 * ctx.speed
+                                and prev_deadline - now > 4.0 * ctx.speed):
+                            ctx.deadline = min(prev_deadline, now + 4.0 * ctx.speed)
                             _extended = True
                             continue
                         break

@@ -53,6 +53,7 @@ input -> fingerprint(data) -> best-first layered decode search (core.py)
 ```
 python3 autocrypt.py <file> [--json] [--verbose] [--top N] [--timeout S]
                      [--jobs N] [--strict] [--flag-format RE]
+                     [--explain] [--fast] [--deep]
 ```
 
 - Multi-file input (`challenge.py output.txt`) is merged by static AST parsing —
@@ -61,6 +62,46 @@ python3 autocrypt.py <file> [--json] [--verbose] [--top N] [--timeout S]
 - `--verbose` explains accept/reject and prints per-solver timings.
 - `--strict` (or `AUTOCRYPT_STRICT=1`): any unexpected solver exception
   (NameError, TypeError, …) makes the run exit non-zero after finishing.
+- `--explain` prints a plain-English sentence under each ranked result explaining
+  how each chain layer was decoded/broken.
+- `--fast` cuts time roughly in half (shorter per-solver slices) and skips the
+  most expensive brute-force solvers (DLP smoothing, Hill-2×2, Enigma, hash
+  cracking, Vigenère brute). Use when you want a quick answer.
+- `--deep` doubles per-solver time and allows a deeper layered decode search
+  (max depth 6 → 9) for stubborn multi-layer challenges.
+
+## Real CTF challenges (`.py` + `output.txt`)
+
+CTF crypto challenges usually ship a generator/encryption script plus captured
+output. autocrypt ingests both in one invocation, e.g.:
+
+```
+python3 autocrypt.py real_challenges/sumoprimes/gen.py real_challenges/sumoprimes/output.txt
+```
+
+The `.py` file is parsed statically (never executed): label-carrying `print()`
+calls, assigned constants, and hex/`pow(g,…)` hints are extracted and merged
+with the output so the solver can find `n/e/c`, primes, keys, or leaks that live
+only in the source. Real curated challenges live under `real_challenges/` (see
+`LOGS.md` Session 7/8/11 for what they exercised and fixed).
+
+## How to add a solver
+
+1. Write a function in a `solvers*.py` file decorated with
+   `@solver(name, matches)`, where `matches(fp)` returns a prior probability in
+   `[0,1]` given the fingerprint dict (charset, entropy, magic, …).
+2. The function is a generator: `solve(data, ctx)` yields tuples
+   `(plaintext, method, params, claimed_score)`. `plaintext` is `bytes` (or a
+   ready-to-display string). Use `yield` for each candidate; the search stops
+   when you stop yielding or your time slice ends.
+3. If the solver recognizes labeled values (`n=`, `c=`, `key=`, …) use the
+   `_vals(data, ctx)` / `_pick(...)` helpers instead of regexing raw text — they
+   understand the labeled-line extraction from `challenge.py`.
+4. Score honestly: `ctx.assess(pt)` gives English/flag evidence; a verified
+   recovery (attack math checks out) may claim high confidence, a statistical
+   guess should not. Set `_statistical` in params when the result is a guess.
+5. Register the solver in the `test_*` family you extend and add a `run_tests.sh`
+   row if it has a deterministic expected flag.
 
 ## Solver families
 
@@ -96,6 +137,9 @@ python3 test_hexfamily.py <seed> --matrix | --grid d12|d34
 python3 test_xorfamily.py         # L≥4 short-flag repeating-XOR family (7/10 accepted; known ambiguity)
 python3 test_blind3.py / test_blind4.py   # blind sets (seen-data regressions)
 python3 test_e3.py                # E3 realistic CTF pairs (strict harness)
+python3 test_e4.py                # challenge.py print-label extraction (10/10)
+python3 test_explain.py           # --explain (7/7)
+python3 test_e7.py                # --fast / --deep flags (4/4)
 python3 test_rsapqfamily.py / test_rsaexactfamily.py / test_families_turn.py
 python3 flakecheck.py <seed> --grid d34 [--contend]   # idle vs loaded determinism
 ```

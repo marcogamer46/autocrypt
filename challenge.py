@@ -27,6 +27,36 @@ def _label(node, seen):
     return low
 
 
+def _print_data_args(args):
+    """Yield (expr, is_hex) for each data-bearing AST expression in print() args.
+
+    Handles the common real-challenge shapes that a naive ``arg in call.args``
+    loop misses:
+      * f-strings -- ``print(f"n = {n}")`` is a single JoinedStr; yield each
+        interpolated FormattedValue.value as its own data label (banner
+        segments are skipped), and mark it hex when the field spec is ``:x``.
+      * list/tuple prints -- ``print((n, e, c))`` / ``print([n, e, c])``
+        yield each element so n/e/c line up with output tokens in order.
+    """
+    def fmt_spec_hex(v):
+        spec = v.format_spec
+        return spec is not None and "x" in ast.unparse(spec).lower()
+
+    for arg in args:
+        if isinstance(arg, ast.JoinedStr):
+            for v in arg.values:
+                if isinstance(v, ast.FormattedValue) and v.value is not None:
+                    yield v.value, fmt_spec_hex(v)
+            continue
+        if isinstance(arg, (ast.Tuple, ast.List)):
+            yield from _print_data_args(arg.elts)
+            continue
+        # plain constant banner text is not data
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            continue
+        yield arg, _is_hex_format(arg)
+
+
 def _number(node):
     try:
         v = ast.literal_eval(node)
@@ -98,12 +128,10 @@ def analyze_source(src: str):
                      and getattr(n.func, "id", "") == "print"), key=lambda n: (n.lineno, n.col_offset))
     seen = {}
     for call in prints:
-        for arg in call.args:
-            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                continue                      # banner text, not data
+        for arg, arg_hex in _print_data_args(call.args):
             lab = _label(arg, seen)
             labels.append(lab)
-            if _is_hex_format(arg):
+            if arg_hex:
                 hex_labels.add(lab)
     # number duplicate labels: c, c -> c1, c2
     total = {l: labels.count(l) for l in set(labels)}
@@ -222,9 +250,14 @@ def load(paths):
         # Accept the built-in whitelist OR any name the source actually prints as
         # a data label (e.g. n1/n2/n3/c3 in a broadcast). For standalone .txt
         # inputs labels is empty, so behavior is unchanged.
-        if k in ("n", "modulus", "c", "ct", "c1", "c2", "g", "m", "x", "secret") \
+        if k in ("n", "modulus", "c", "ct", "c1", "c2", "ciphertext", "enc",
+                 "msg", "message", "g", "m", "p", "q", "s", "e", "x", "secret") \
                 or k in known_labels:
-            is_hex = raw.lower().startswith("0x") or bool(re.search(r"[a-fA-F]", raw))
+            # A value the source formats as hex (e.g. f"{e:x}") is hex even
+            # when it happens to contain only digits (0x10001 -> "10001").
+            is_hex = (raw.lower().startswith("0x")
+                      or bool(re.search(r"[a-fA-F]", raw))
+                      or k in hex_labels)
             if raw.lower().startswith("0x"):
                 val = int(raw, 16)
                 labeled_lines.append(f"{k}=0x{raw[2:]}")
@@ -248,7 +281,11 @@ def load(paths):
     # matched by the hex token regex and corrupt label<->value alignment
     # (seen on c10's broadcast output, where the labels/values stopped lining up).
     stripped = re.sub(r"(?m)^\s*[A-Za-z_]\w*\s*=\s*", "", text)
-    toks = re.findall(r"[0-9a-fA-F]+", stripped) if blobs else []
+    # Only value-like tokens (must contain a digit). Prose words in banner
+    # text such as "params:" otherwise contribute spurious all-letter tokens
+    # ("p","a","a") that break label<->token alignment for tuple/list prints.
+    toks = [t for t in re.findall(r"[0-9a-fA-F]+", stripped)
+            if re.search(r"\d", t)] if blobs else []
     lines = []
     if toks and labels and len(toks) == len(labels):
         for l, t in zip(labels, toks):
