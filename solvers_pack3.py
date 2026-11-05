@@ -5,6 +5,7 @@ import base64
 import hashlib
 import math
 import re
+import string
 
 from core import solver
 from scoring import assess, plain_text_score
@@ -22,11 +23,11 @@ def _printable(b, lim=.95):
 
 # ------------------------------------------------ RSA with p+q / p-q leak
 @solver("RSA-sum-leak", lambda fp: .999 if fp["charset"] == "ascii-text" and re.search(
-    r"\b(?:p_?plus_?q|sum_?pq|p\+q|pq_sum|s)\s*=", fp.get("_text", "")) else 0.0)
+    r"\b(?:p_?plus_?q|sum_?pq|p\+q|pq_sum|s|x)\s*=", fp.get("_text", "")) else 0.0)
 def solve_sum_leak(data, ctx):
     v = _vals(data, ctx)
     n, c, e = v.get("n"), _pick(v, "c", "ct", "enc", "cyphertext", "ciphertext"), v.get("e", 65537)
-    s = _pick(v, "p_plus_q", "pplusq", "sum_pq", "pq_sum", "s")
+    s = _pick(v, "p_plus_q", "pplusq", "sum_pq", "pq_sum", "s", "x")
     if not (n and c and s):
         return
     disc = s * s - 4 * n
@@ -117,6 +118,41 @@ def solve_base_variants(data, ctx):
     for name, out in tries:
         if out and _printable(out, .85):
             yield out, name, {}, assess(out)[0]
+
+
+# ------------------------------------------------ New-Caesar (picoCTF)
+# Custom cipher: b16_encode maps each byte to two nibbles, each nibble an
+# index into ALPHABET = "abcdefghijklmnop" (first 16 lowercase). Each char is
+# then Caesar-shifted by a single key char (mod 16). The ciphertext is purely
+# [a-p] and has even length. Brute force the 16 possible shifts and take the
+# highest-scoring plaintext.
+@solver("new-caesar-b16", lambda fp: .55 if fp["charset"] == "ascii-text" and (
+    len(re.findall(r"(?i)[a-p]{16,}", fp.get("_text", ""))) >= 1) else 0.0)
+def solve_new_caesar(data, ctx):
+    # Use the longest contiguous [a-p] run (the actual ciphertext). Simple
+    # filtering can accidentally splice letters from hint lines like
+    # "key_bytes=0x62" (k/e/b are all in a-p) into the nibble stream.
+    runs = re.findall(r"(?i)[a-p]+", _txt(data))
+    t = max(runs, key=len) if runs else ""
+    if len(t) < 16 or len(t) % 2 != 0:
+        return
+    ALPHABET = string.ascii_lowercase[:16]
+    best = None
+    for k in range(16):                      # key offset 0..15
+        idx = [((ord(c) - 97 - k) % 16) for c in t]
+        try:
+            out = bytes((idx[i] << 4) | idx[i + 1] for i in range(0, len(idx), 2))
+        except Exception:
+            continue
+        pr = sum(32 <= b < 127 or b in (9, 10, 13) for b in out) / len(out)
+        if pr < .85:
+            continue
+        ac = assess(out)[0]
+        if best is None or ac > best[0]:
+            best = (ac, out, k)
+    if best:
+        ac, out, k = best
+        yield out, f"New-Caesar b16 (key=chr({97+k}))", {"_statistical": True}, max(.7, min(.99, ac))
 
 
 # ------------------------------------------------ byte-level transforms

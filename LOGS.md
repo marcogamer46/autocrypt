@@ -113,6 +113,27 @@ All work performed on 2026-10-31 (single continuous engagement).
 | c05 fix | verified-exact/flag accept printable flag-shaped exact recoveries via _flagout_ok (is_flagish too strict for underscore-heavy bodies). Fresh family seed 20270721: 10/10 <3s; c05 wall 30.5s→0.24s. | core.py, test_rsaexactfamily.py | all suites |
 | E3-A/c15 fixes | common-modulus separators (space/: /=, hex) 10/10 <3s; FR a·m+b generalization 10/10 <3s; hash label parsing + hash→XOR pairing 10/10 <3s; sep-hex token recognition (fingerprint/decoder/fixpoint) 2/10 <3s (target unmet; scheduler latency). Negatives 0 FP. Plus fixed K0 os-shadow, mis-placed decorator, base_method ordering, recovered-cap statistical exemption. | solvers.py, solvers_pack7.py, solvers_plus.py, solvers_more.py, core.py, test_families_turn.py | all suites (strict) |
 
+## Session 6 — env bring-up + hint propagation (E3 cycle 2 partial), 2026-11-05
+
+| Step | What changed | Files | Verified |
+|------|--------------|-------|----------|
+| ENV | No system Python (Microsoft Store stubs); `uv python install 3.12.16`, project `.venv`, `python3.exe` shim in `.venv/Scripts`; `pillow==13.0.0` installed for `lsb_png`. | .venv/, run_tests.sh | run_tests 40/40 reachable |
+| H2 | Hint propagation from challenge.py: `dlp_hint` (inline `pow(g,int,n)` → `a=<int>`; `pow(g,SECRET,n)` secret detection), `byte_hints` (key/secret/password/salt str/bytes Constants → hex); `_hint_lines()` emits additive markers on every return path; DH p/g/A/B/enc restoration. New hint-consumer solvers (`hint-secret-xor`, `hint-caesar`, `hint-vigenere`) fire at prior .99 with marker. | challenge.py, solvers.py, test_hints.py | 7/7 markers; E3 S-group c02/c03/c04/c07/c12/c13/c15 green |
+| H3 | (a) fr_unlabeled: console-encoding crash (cp1252 U+FFFD) — `sys.stdout/stderr.reconfigure(errors="replace")` fixes; (b) c10 Hastad: shared-`e` triples in `solve_rsa`, token-strip before hex scanning, `labeled_lines` whitelist + `known_labels` → c10 PASS; (c) lsb_png via Pillow. | solvers.py, challenge.py, autocrypt.py | c10 PASS; run_tests 40/40 |
+| Regression | Full suite re-run: matrix --both 22/22 rank #1; multijob 38/38 equal; run_tests 40/40. E3 strict: 7/15 PASS (c02,c05,c06,c07,c10,c13,c15); c12 solves but BUDGET; c01/c03#2/c04/c08/c09/c11/c14 still failing. | — | all green, E3 7/15 |
+
+## Session 7 — real online CTF challenges + multi-prime RSA fix, 2026-11-05
+
+| Step | What changed | Files | Verified |
+|------|--------------|-------|----------|
+| R1 | Curated 3 real picoCTF crypto challenges from public writeups into `real_challenges/` (isolated dir, downloaded data treated as untrusted): **miniRSA** (single-file N/e=3/c), **Many Prime** (multi-file challenge.py + output.txt, 4 primes), **rotation** (single-file ROT ciphertext). | real_challenges/minirsa/, real_challenges/multiprime/, real_challenges/rotation/ | miniRSA solved instantly (small-e exact root); rotation solved (caesar shift 8); multiprime TIMED OUT (pre-fix) |
+| R2 | Root-caused multiprime timeout: source had all 4 primes (p1..p4) but challenge.py hint extraction only whitelisted key/secret/password/salt + a few numeric constants — primes were dropped, so the RSA solver tried to factor a 372-bit composite in its 4s slice. Fixed hint propagation: `_hint_lines` now emits `pN=`/`qN=` constants for multi-prime (p/q + digit suffix, >1000) sources. | challenge.py | load() now emits p1..p4 |
+| R3 | `solve_rsa_extra` gained a given-primes short-circuit: if the hint primes' product == n, compute φ=∏(p-1) and decrypt — checked BEFORE factor_all (so a large modulus never costs a slice), and `return` immediately after a verified known-multi-prime recovery (previously it fell through to factor_all and burned the deadline). | solvers_more.py | RSA-extra yields known-multi-prime in 0.00s |
+| R4 | Main `solve_rsa` (prior 0.99, runs FIRST) starved the search: it got a 30s extension and factored a 372-bit composite, exhausting the global deadline before RSA-extra (0.85) ran. Ported the same given-primes fast path into `solve_rsa`, and extended `_rsa_values`' label regex to capture `p\d*|q\d*` (and to retain p/q keys through normalization). | solvers.py | CLI multiprime at 20s → instant flag; full run returns `picoCTF{mul71_rsa_0f2cedbf}` |
+| R5 | Fix labeled-line extraction for 0x-hex output: the regex `[0-9a-fA-F]+` didn't accept the `0x` prefix, so `n = 0x...` / `c = 0x...` lines were dropped entirely (multi-file hex challenges lost n/c). Now accepts optional `0x`, and value parsing detects explicit 0x (so `e=0x10001` isn't misread as decimal). | challenge.py | hex multi-file merged data now carries n/e/c + primes |
+| R6 | New family test `test_rsamultiprimefamily.py` (seed 20271105, 10 cases: single-file decimal/hex + multi-file source/output, decimal/hex): 0/10 → 8/10 → 10/10, each rank #1 and <0.5s. Added real multiprime pair into `fixtures/multiprime_real/` and registered a `run_tests.sh` row (expects `picoCTF{mul71_rsa_0f2cedbf}`). | test_rsamultiprimefamily.py, fixtures/multiprime_real/, run_tests.sh | family 10/10; run_tests 41/41 |
+| Regression | Full suite after changes: run_tests 41/41 (incl. new multiprime; even_e one-off timing flake 20.5s → PASS on re-run); matrix/multijob/flagshape/fuzz re-verified. | — | all green |
+
 ## Final state
 - `bash run_tests.sh` → 40/40 PASS
 - `python3 fuzz.py` → ALL FUZZ CASES OK
@@ -135,3 +156,28 @@ All work performed on 2026-10-31 (single continuous engagement).
 - E3 solvability proof: 13/13 ref-solves OK; invocation check; P/S/A diagnosis recorded. c05 early-exit fix verified (10/10 <3s fresh).
 - E3-A/c15 fixes complete per family (common/FR/hash 10/10; sep-hex 2/10 <3s not met); negatives 0 FP; regressions green strict.
 - Known remaining: deep layered top-cipher chains (vigenere/atbash/xor over encodings, depth 3-4) still miss ~3/10 at the 15s budget (loading-stable but not solved) — targeted by E3/E6 next.
+
+## Session 8 — more real CTF challenges: Sum-O-Primes (RSA p+q leak) + New Caesar (b16 cipher)
+
+### R1 — Sum-O-Primes (multi-file .py + output.txt, RSA p+q leak, hex output)
+- Downloaded real picoCTF Sum-O-Primes pair (`gen.py` + `output.txt`) into `real_challenges/sumoprimes/`.
+- Challenge: `x = p + q` is leaked (in hex); with `n = p*q`, solving `t² − x·t + n = 0` recovers p/q and decrypts. `e=65537`, `c` given.
+- Initial result: FAIL. autocrypt mis-decoded the hex `x/n/c` lines as quoted-printable → monoalphabetic garbage (conf 0.60, not English). Root cause: the `RSA-sum-leak` solver (solvers_pack3.py) only matched variable names `p_plus_q`/`sum_pq`/`pq_sum`/`s` — the real challenge names the sum `x`.
+- Fix in solvers_pack3.py:
+  - matcher regex now also accepts `x` as a sum variable;
+  - `_pick(..., "s", "x")` includes `x`.
+- After fix: CLI recovers the real flag: `picoCTF{pl33z_n0_g1v3_c0ngru3nc3_0f_5qu4r35_24929c45}` (conf 0.98). This is the first multi-file hex RSA challenge solved end-to-end.
+
+### R2 — New Caesar (custom b16 nibble-encode + shift mod 16; .py + .enc)
+- Downloaded real picoCTF New Caesar `new_caesar.py` (encryption logic) and obtained the real ciphertext (`output.enc`) from the public writeup.
+- Cipher: each plaintext byte → 2 nibbles, each nibble indexes `ALPHABET = "abcdefghijklmnop"` (first 16 lowercase); then each char is Caesar-shifted by a one-char key (mod 16). Ciphertext is purely `[a-p]`, even length.
+- Initial result: FAIL. autocrypt had no solver for this custom cipher — the search mis-decoded it as reverse-each-word → monoalphabetic garbage.
+- Added solver `new-caesar-b16` (solvers_pack3.py): takes the longest contiguous `[a-p]` run, brute-forces all 16 possible single-char shifts, decodes nibble pairs to bytes, keeps the highest-scoring printable plaintext. Correct key recovered as `chr(98)` = `b`, yielding the real flag.picoCTF{et_tu?_5723f4e71a0736d3b1d19dde4279ac03}`.
+
+### R3 — hint-line leakage fix in the New-Caesar solver
+- Bug: the merged multi-file data included the hint line `key_bytes=0x62`; naive `re.sub(r"[^a-p]", ...)` concatenated the k/e/b letters from the hint into the nibble stream → trailing garbage bytes (`\x93\x03`).
+- Fix: solver now picks the *longest contiguous* `[a-p]` run (the actual ciphertext) instead of all a-p letters. Multi-file result now clean and exact.
+
+### Regression
+- Full suite re-run after changes (40+ rows) — see PROGRESS.
+- New `run_tests.sh` rows: `real_pqsum` (expects real picoCTF Sum-O-Primes flag) and `real_newcaesar` (expects real picoCTF New Caesar flag).

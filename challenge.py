@@ -35,20 +35,40 @@ def _number(node):
         return None
 
 
+_STR_BYTES_HINT_NAMES = {"key", "secret", "password", "salt"}
+
+
 def analyze_source(src: str):
-    """Returns (constants, print_labels, findings, hex_labels, dlp_hint). Static only."""
+    """Returns (constants, print_labels, findings, hex_labels, dlp_hint, byte_hints).
+
+    `byte_hints` maps lowercased secret names (key/secret/password/salt) to the
+    utf-8/raw hex of constant str/bytes assignments. `dlp_hint` may additionally
+    carry {"a": int} for pow(g, <int literal>, n) calls (inline private exponent).
+    """
     consts, labels, findings = {}, [], []
     hex_labels = set()
     dlp_hint = {}
+    byte_hints = {}
     try:
         tree = ast.parse(src)
     except SyntaxError as exc:
-        return consts, labels, [f"source not parseable: {exc.msg}"], set(), {}
+        return consts, labels, [f"source not parseable: {exc.msg}"], set(), {}, {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
             v = _number(node.value)
+            low = node.targets[0].id.lower()
             if v is not None:
-                consts[node.targets[0].id.lower()] = v
+                consts[low] = v
+            elif isinstance(node.value, ast.Constant) and low in _STR_BYTES_HINT_NAMES:
+                val = node.value.value
+                if isinstance(val, str):
+                    b = val.encode("utf-8", "replace")
+                elif isinstance(val, bytes):
+                    b = val
+                else:
+                    b = None
+                if b:
+                    byte_hints[low] = b.hex()
         if isinstance(node, ast.Call):
             fn = getattr(node.func, "id", getattr(node.func, "attr", ""))
             if fn == "getPrime" and node.args and _number(node.args[0]):
@@ -67,6 +87,13 @@ def analyze_source(src: str):
                         g = consts.get(gnode.id.lower())
                     dlp_hint["g"] = g
                     dlp_hint["secret"] = enode.id if isinstance(enode, ast.Name) else "secret"
+                elif isinstance(enode, ast.Constant) and isinstance(enode.value, int) \
+                        and not isinstance(enode.value, bool):
+                    # pow(g, <inline int literal>, n) -> private exponent marker.
+                    # Keep the FIRST inline exponent (the source's private key for
+                    # `A = pow(g, a, p)`) — the DH solver pairs it with the public
+                    # value of the other party to recover the shared secret.
+                    dlp_hint.setdefault("a", enode.value)
     prints = sorted((n for n in ast.walk(tree) if isinstance(n, ast.Call)
                      and getattr(n.func, "id", "") == "print"), key=lambda n: (n.lineno, n.col_offset))
     seen = {}
@@ -90,7 +117,7 @@ def analyze_source(src: str):
             out.append(l)
     for m in re.finditer(r"\b(?:xor|AES|DES|Fernet|ChaCha|random|LFSR|lfsr|pow\(|getPrime|DSA|ECC|elgamal)\b", src):
         findings.append(f"source mentions '{m.group(0)}'")
-    return consts, out, list(dict.fromkeys(findings)), hex_labels, dlp_hint
+    return consts, out, list(dict.fromkeys(findings)), hex_labels, dlp_hint, byte_hints
 
 
 def _is_hex_format(node) -> bool:
@@ -115,6 +142,61 @@ def _is_hex_format(node) -> bool:
     return False
 
 
+def _hint_lines(text, consts, byte_hints, dlp_hint):
+    """Build additive `name=value` hint lines (never executed; safe to append).
+
+    Emits only whitelisted secret constants plus the inline-pow exponent. For a
+    DH source (inline pow literal exponent) it also restores p/g/A/B/enc from
+    the output text so the Diffie-Hellman solver receives every parameter.
+    """
+    hints = []
+    shift = consts.get("shift")
+    if isinstance(shift, int) and 1 <= shift <= 25:
+        hints.append(f"shift={shift}")
+    seed = consts.get("seed")
+    if isinstance(seed, int) and seed > 0:
+        hints.append(f"seed={seed}")
+    key = consts.get("key")
+    if isinstance(key, int):
+        hints.append(f"key=0x{key:x}")
+    for name in ("key", "secret", "password", "salt"):
+        hx = byte_hints.get(name)
+        if hx:
+            hints.append(f"{name}_bytes=0x{hx}")
+    # Multi-prime RSA: propagate explicitly-given prime factors (p1..pN /
+    # q1..qN) as hints so the solver can compute phi(n) without factoring.
+    prime_factors = []
+    for nm in sorted(consts, key=lambda s: (s.rstrip("0123456789"), len(s))):
+        base = nm.rstrip("0123456789")
+        if base in ("p", "q") and nm != base and isinstance(consts[nm], int) \
+                and consts[nm] > 1000:
+            prime_factors.append((nm, consts[nm]))
+    if len(prime_factors) >= 2 and not any(l.startswith("p1=") or l.startswith("q1=")
+                                          for l in hints):
+        for nm, pv in prime_factors:
+            hints.append(f"{nm}={pv}")
+    if dlp_hint.get("a") is not None and not any(l.startswith("a=") for l in hints):
+        hints.append(f"a={dlp_hint['a']}")
+    if dlp_hint.get("a") is not None:
+        # The labeled-line path drops non-whitelisted numeric lines; restore the
+        # DH parameters the solver needs (p, g, A, B, and the ciphertext as enc).
+        for nm, rx in (
+                ("p", r"(?im)^\s*p\s*=\s*((?:0x)?[0-9a-fA-F]+)"),
+                ("g", r"(?im)^\s*g\s*=\s*((?:0x)?[0-9a-fA-F]+)"),
+                ("A", r"(?im)^\s*A\s*=\s*((?:0x)?[0-9a-fA-F]+)"),
+                ("B", r"(?im)^\s*B\s*=\s*((?:0x)?[0-9a-fA-F]+)"),
+                ("enc", r"(?im)^\s*(?:ct|c|enc)\s*=\s*((?:0x)?[0-9a-fA-F]+)")):
+            m = re.search(rx, text)
+            if m:
+                raw = m.group(1).strip()
+                if nm == "enc":
+                    raw = raw[2:] if raw.lower().startswith("0x") else raw
+                    hints.append(f"enc=0x{raw}")
+                else:
+                    hints.append(f"{nm}={raw}")
+    return hints
+
+
 def load(paths):
     """paths: list of files (.py and/or data). Returns (data_bytes, findings, source_text)."""
     src = ""
@@ -127,18 +209,31 @@ def load(paths):
             blobs.append(b)
     if not src:
         return b"\n".join(blobs), [], ""
-    consts, labels, findings, hex_labels, dlp_hint = analyze_source(src)
+    consts, labels, findings, hex_labels, dlp_hint, byte_hints = analyze_source(src)
     data = b"\n".join(blobs)
     text = data.decode("utf-8", "ignore")
+    hint_lines = _hint_lines(text, consts, byte_hints, dlp_hint)
     # Direct labeled-line extraction ("n = 8c...", "c = ...") independent of
     # print-order counting.
     labeled_lines = []
-    for m in re.finditer(r"(?m)^\s*([A-Za-z_]\w*)\s*=\s*([0-9a-fA-F]+)\s*$", text):
+    known_labels = set(labels)
+    for m in re.finditer(r"(?m)^\s*([A-Za-z_]\w*)\s*=\s*((?:0x)?[0-9a-fA-F]+)\s*$", text):
         k, raw = m.group(1).lower(), m.group(2)
-        if k in ("n", "modulus", "c", "ct", "c1", "c2", "g", "m", "x", "secret"):
-            val = int(raw, 16) if re.search(r"[a-fA-F]", raw) else int(raw, 10)
-            labeled_lines.append(f"{k}=0x{raw}" if re.search(r"[a-fA-F]", raw)
-                                 else f"{k}={val}")
+        # Accept the built-in whitelist OR any name the source actually prints as
+        # a data label (e.g. n1/n2/n3/c3 in a broadcast). For standalone .txt
+        # inputs labels is empty, so behavior is unchanged.
+        if k in ("n", "modulus", "c", "ct", "c1", "c2", "g", "m", "x", "secret") \
+                or k in known_labels:
+            is_hex = raw.lower().startswith("0x") or bool(re.search(r"[a-fA-F]", raw))
+            if raw.lower().startswith("0x"):
+                val = int(raw, 16)
+                labeled_lines.append(f"{k}=0x{raw[2:]}")
+            elif is_hex:
+                val = int(raw, 16)
+                labeled_lines.append(f"{k}=0x{raw}")
+            else:
+                val = int(raw, 10)
+                labeled_lines.append(f"{k}={val}")
     if labeled_lines:
         for k, v in consts.items():
             if k in ("e", "exponent") and "e" not in {l.split("=")[0] for l in labeled_lines}:
@@ -147,8 +242,13 @@ def load(paths):
             labeled_lines.append(f"g={dlp_hint['g']}")
         if "dlp_secret" not in "\n".join(labeled_lines) and dlp_hint.get("g") is not None:
             labeled_lines.append("dlp_secret=1")
-        return ("\n".join(labeled_lines) + "\n").encode(), findings, src
-    toks = re.findall(r"[0-9a-fA-F]+", text) if blobs else []
+        return ("\n".join(labeled_lines + hint_lines) + "\n").encode(), findings, src
+    # Strip `name = ` assignment prefixes before scanning for value tokens.
+    # Otherwise hex-looking label names ("c1", "e", "c2" ...) are themselves
+    # matched by the hex token regex and corrupt label<->value alignment
+    # (seen on c10's broadcast output, where the labels/values stopped lining up).
+    stripped = re.sub(r"(?m)^\s*[A-Za-z_]\w*\s*=\s*", "", text)
+    toks = re.findall(r"[0-9a-fA-F]+", stripped) if blobs else []
     lines = []
     if toks and labels and len(toks) == len(labels):
         for l, t in zip(labels, toks):
@@ -175,5 +275,8 @@ def load(paths):
         lines.append(f"g={dlp_hint['g']}")
         lines.append("dlp_secret=1")
     if lines:
-        return ("\n".join(lines) + "\n").encode(), findings, src
+        return ("\n".join(lines + hint_lines) + "\n").encode(), findings, src
+    if hint_lines:
+        tail = ("\n" + "\n".join(hint_lines)).encode()
+        return (data or src.encode()) + tail, findings, src
     return (data or src.encode()), findings, src

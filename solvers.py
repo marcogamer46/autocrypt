@@ -382,6 +382,19 @@ def _rank_score(out):
     return max(a, f) if f > 0 else a
 
 
+_FLAG_ONLY_RE = re.compile(r"[A-Za-z0-9_]{1,40}\{[^{}\s]{0,300}\}")
+_KNOWN_PFX = ("flag{", "ctf{", "picoctf{", "htb{", "ictf{", "dice{",
+              "academy{", "thm{", "geek{", "cuhk24ctf{", "mini{")
+
+
+def _hint_flag_only(s):
+    """Return a known-prefix flag substring (e.g. 'academy{...}') if present."""
+    m = _FLAG_ONLY_RE.search(s or "")
+    if m and m.group(0).lower().startswith(_KNOWN_PFX):
+        return m.group(0)
+    return None
+
+
 def _top_texts(text, variants, count=3):
     ranked = sorted(((_rank_score(out), out, method, params) for out, method, params in variants),
                     reverse=True, key=lambda x: x[0])
@@ -398,6 +411,23 @@ def solve_caesar(data, ctx):
         # Pure hex/digest-looking blobs are not Caesar text; trying shifts here
         # spawns combinatorial junk children (and starves real solvers).
         return
+    # Source hint: `shift=N` (challenge.py) gives the exact key — decrypt it
+    # directly and skip the exhaustive all-shifts loop.
+    _sm = re.search(r"(?m)^\s*shift\s*=\s*(\d+)\s*$", text)
+    if _sm:
+        k = int(_sm.group(1))
+        if 1 <= k < 26:
+            out = _letter_shift(text, lambda x, k=k: x - k)
+            fo = _hint_flag_only(out)
+            if fo:
+                yield fo, "caesar(hint)", {"shift": k, "_statistical": True}, .99
+                return
+            sc = _rank_score(out)
+            pf = flag_plausibility(out)
+            if pf > 0 or sc >= .55:
+                claimed = .97 if pf > 0 else max(.6, min(.95, sc))
+                yield out, "caesar(hint)", {"shift": k, "_statistical": True}, claimed
+                return
     variants = [(_letter_shift(text, lambda x, k=k: x - k), "caesar", {"shift": k})
                 for k in range(1, 26)]
     if len(text) <= 200 and (any(not c.isalpha() for c in text) or any(c.islower() for c in text)):
@@ -482,6 +512,44 @@ def solve_vigenere(data, ctx):
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         return
+    # Source hint: `key_bytes=0x..` (challenge.py) gives the exact key. The
+    # printed output usually carries a label prefix ("ct = ") that is NOT part
+    # of the ciphertext, so scan leading offsets to align the key.
+    _kbm = re.search(r"(?m)^\s*key_bytes\s*=\s*0x([0-9a-fA-F]+)\s*$", text)
+    if _kbm:
+        try:
+            _word = bytes.fromhex(_kbm.group(1)).decode("utf-8")
+        except Exception:
+            _word = None
+        if _word and _word.isalpha() and 2 <= len(_word) <= 24:
+            ks = [ord(c) - 97 for c in _word.lower()]
+            best = None
+            for s in range(0, min(8, len(text))):
+                j, out = 0, []
+                for c in text:
+                    if c.lower() in string.ascii_lowercase:
+                        if j < s:
+                            out.append(c); j += 1; continue
+                        k = ks[(j - s) % len(ks)]
+                        x = ord(c.lower()) - 97
+                        out.append(chr((x - k) % 26 + (65 if c.isupper() else 97)))
+                        j += 1
+                    else:
+                        out.append(c)
+                plain = "".join(out)
+                sc, pf = _rank_score(plain), flag_plausibility(plain)
+                if best is None or max(sc, pf) > best[0]:
+                    best = (max(sc, pf), plain)
+            if best and best[1]:
+                sc, plain = best
+                fo = _hint_flag_only(plain)
+                if fo:
+                    yield fo, "vigenere(hint)", {"key": _word.upper(), "_statistical": True}, .99
+                    return
+                if flag_plausibility(plain) > 0 or sc >= .55:
+                    claimed = .97 if flag_plausibility(plain) > 0 else max(.6, min(.95, sc))
+                    yield plain, "vigenere(hint)", {"key": _word.upper(), "_statistical": True}, claimed
+                    return
     letters = [c.lower() for c in text if c.isalpha() and c.lower() in string.ascii_lowercase]
     if len(letters) < 8:
         return
@@ -545,6 +613,8 @@ def solve_vigenere(data, ctx):
         "key secret password flag ctf crypto cipher lemon pass admin hello world test "
         "cat dog abc abcd picoctf secure vigenere caesar encrypt decrypt python hacker "
         "cyber security academy pico thm htb root toor letmein qwerty").split()]
+    if _kbm and _word and _word.isalpha() and 2 <= len(_word) <= 24:
+        _builtin.insert(0, _word.lower().encode())
     for raw in _builtin + list(ctx.wordlist[:50_000]):
         word = raw.decode("ascii", "ignore").strip().lower()
         if not (2 <= len(word) <= 24) or not word.isalpha():
@@ -1672,7 +1742,7 @@ def _rsa_values(data, ctx):
         try:
             text = data.decode("ascii", "ignore")
             for key, value in re.findall(
-                r"\b(n\d*|modulus\d*|e\d*|exponent\d*|c\d*|ciphertext\d*|cyphertext\d*|cypher\d*|cipher\d*|ct\d*|enc\d*|encrypted\d*|message\d*|msg\d*)\s*[:=]?\s*(0x[0-9a-f]+|\d+)",
+                r"\b(n\d*|modulus\d*|e\d*|exponent\d*|c\d*|ciphertext\d*|cyphertext\d*|cypher\d*|cipher\d*|ct\d*|enc\d*|encrypted\d*|message\d*|msg\d*|p\d*|q\d*)\s*[:=]?\s*(0x[0-9a-f]+|\d+)",
                 text, re.I,
             ):
                 values.setdefault(key.lower(), value)
@@ -1691,7 +1761,7 @@ def _rsa_values(data, ctx):
                     break
                 except (ValueError, TypeError):
                     pass
-    normalized.update({k: v for k, v in values.items() if re.fullmatch(r"(?:n|e|c)\d+", k)})
+    normalized.update({k: v for k, v in values.items() if re.fullmatch(r"(?:n|e|c|p|q)\d+", k)})
     for key, value in list(normalized.items()):
         if isinstance(value, str):
             try:
@@ -1883,6 +1953,23 @@ def solve_rsa(data, ctx):
     if not ctx.rsa_params and n is not None and n < 256:
         return
     if n and e and c is not None and n > 1 and e > 0:
+        # Multi-prime RSA: source-hint primes p1..pN / q1..qN whose product
+        # equals the modulus. Checked BEFORE factoring so a large composite
+        # never costs a slice, and so the first (highest-prior) RSA solver
+        # returns instantly instead of starving the remaining search.
+        given_primes = sorted({val for k, val in vals.items()
+                              if re.fullmatch(r"(?:p|q)\d+", k)})
+        if len(given_primes) >= 2 and math.prod(given_primes) == n:
+            _phi = 1
+            for pp in given_primes:
+                _phi *= pp - 1
+            _d = _inv(e, _phi)
+            if _d is not None:
+                _m = pow(c, _d, n)
+                yield from _emit(ctx, _int_plain(_m), "RSA factored",
+                                 {"n": n, "e": e, "primes": given_primes,
+                                  "d": _d, "m": _m})
+                return
         # p and q are given: decrypt directly via phi(n) — no factoring needed.
         if vals.get("p") and vals.get("q"):
             try:
@@ -1934,11 +2021,20 @@ def solve_rsa(data, ctx):
             if root is not None:
                 yield from _emit(ctx, _int_plain(root), "RSA common-modulus root",
                                  {"n": n, "g": g, "m": root})
-    # Håstad broadcast: n1/e1/c1, n2/e2/c2, ...
+    # Håstad broadcast: n_i / c_i triples. Each triple may carry its own
+    # exponent (e1/e2/e3), or a single shared exponent `e` may apply to all
+    # moduli (the common real-world shape: same public exponent e across
+    # recipients, e.g. c10's broadcast).
     triples = []
+    shared_e = vals.get("e")
     i = 1
-    while all(vals.get(f"{k}{i}") is not None for k in ("n", "e", "c")):
-        triples.append((vals[f"n{i}"], vals[f"e{i}"], vals[f"c{i}"]))
+    while vals.get(f"n{i}") is not None and vals.get(f"c{i}") is not None:
+        ei = vals.get(f"e{i}")
+        if ei is None:
+            ei = shared_e
+        if ei is None:
+            break
+        triples.append((vals[f"n{i}"], ei, vals[f"c{i}"]))
         i += 1
     if len(triples) >= 2 and len({x[1] for x in triples}) == 1:
         exp = triples[0][1]
@@ -2652,3 +2748,144 @@ def solve_dh_xor(data, ctx):
         yield plain, "Diffie-Hellman XOR", {
             "g": g, "p_bits": p.bit_length(), "key_byte": key[0], "_statistical": True
         }, score
+
+
+# -------------------------------------------------- E3 source-hint XOR ----
+# challenge.py emits `secret_bytes=0x..` / `password_bytes=0x..` /
+# `key_bytes=0x..` markers plus the hex ciphertext (`ct=0x..`). These markers
+# appear only in challenge+output merges, so this solver is strictly additive:
+# for ordinary inputs the match prior is 0 and it never runs. It directly
+# decrypts the repeating-XOR ciphertext with the key derived from the constant.
+_HINT_CT_RE = re.compile(r"(?m)^\s*(?:ct|enc|c|x|cipher)\s*=\s*0x([0-9a-fA-F]+)\s*$")
+
+
+@solver("hint-secret-xor", lambda fp: .99 if (
+    re.search(r"(?m)^\s*(?:key_bytes|secret_bytes|password_bytes|key)\s*=\s*0x[0-9a-fA-F]+",
+              fp.get("_text", ""))
+    and _HINT_CT_RE.search(fp.get("_text", ""))) else 0.0)
+def solve_hint_secret_xor(data, ctx):
+    text = data.decode("utf-8", "replace")
+    ct_m = _HINT_CT_RE.search(text)
+    if not ct_m:
+        return
+    try:
+        enc = bytes.fromhex(ct_m.group(1))
+    except ValueError:
+        return
+    if not enc:
+        return
+    keys = []
+    def _add(key):
+        if key and key not in keys:
+            keys.append(key)
+    km = re.search(r"(?m)^\s*key_bytes\s*=\s*0x([0-9a-fA-F]+)", text)
+    if km:
+        try:
+            _add(bytes.fromhex(km.group(1)))
+        except ValueError:
+            pass
+    ks = re.search(r"(?m)^\s*key\s*=\s*0x([0-9a-fA-F]+)", text)
+    if ks:
+        try:
+            _add(bytes([int(ks.group(1), 16)]))
+        except ValueError:
+            pass
+    sm = re.search(r"(?m)^\s*secret_bytes\s*=\s*0x([0-9a-fA-F]+)", text)
+    if sm:
+        try:
+            secret = bytes.fromhex(sm.group(1))
+        except ValueError:
+            secret = None
+        if secret is not None:
+            _add(hashlib.sha256(secret).digest())
+    pm = re.search(r"(?m)^\s*password_bytes\s*=\s*0x([0-9a-fA-F]+)", text)
+    if pm:
+        try:
+            pw = bytes.fromhex(pm.group(1))
+        except ValueError:
+            pw = None
+        if pw is not None:
+            _add(hashlib.md5(pw).hexdigest().encode())
+    if not keys:
+        return
+    for order, key in enumerate(keys):
+        if ctx.expired():
+            break
+        plain = bytes(c ^ key[i % len(key)] for i, c in enumerate(enc))
+        if not _printable(plain):
+            continue
+        txt = plain.decode("latin-1")
+        sc = _rank_score(txt)
+        pf = flag_plausibility(txt)
+        if pf > 0 or sc >= .55:
+            claimed = .97 if pf > 0 else max(.6, min(.95, sc))
+            yield txt, "hint-secret-xor", {"key_len": len(key), "_statistical": True}, claimed
+
+
+# -------------------------------------------------- E3 source-hint classical ---
+# Same idea as hint-secret-xor for classical ciphers: fire only when challenge.py
+# emitted a shift/key_bytes marker, run at the top of the job list (prior .99),
+# and yield the clean known-prefix flag. Strictly additive -- no marker, no run.
+@solver("hint-caesar", lambda fp: .99 if (
+    fp.get("charset") == "ascii-text"
+    and re.search(r"(?m)^\s*shift\s*=\s*(\d+)\s*$", fp.get("_text", ""))) else 0.0)
+def solve_hint_caesar(data, ctx):
+    text = data.decode("utf-8", "replace")
+    m = re.search(r"(?m)^\s*shift\s*=\s*(\d+)\s*$", text)
+    k = int(m.group(1)) if m else None
+    if not k or not 1 <= k < 26:
+        return
+    out = _letter_shift(text, lambda x, k=k: x - k)
+    fo = _hint_flag_only(out)
+    if fo:
+        yield fo, "hint-caesar", {"shift": k, "_statistical": True}, .99
+        return
+    sc, pf = _rank_score(out), flag_plausibility(out)
+    if pf > 0 or sc >= .55:
+        claimed = .97 if pf > 0 else max(.6, min(.95, sc))
+        yield out, "hint-caesar", {"shift": k, "_statistical": True}, claimed
+
+
+@solver("hint-vigenere", lambda fp: .99 if (
+    fp.get("charset") == "ascii-text"
+    and re.search(r"(?m)^\s*key_bytes\s*=\s*0x[0-9a-fA-F]+", fp.get("_text", ""))) else 0.0)
+def solve_hint_vigenere(data, ctx):
+    text = data.decode("utf-8", "replace")
+    kb = re.search(r"(?m)^\s*key_bytes\s*=\s*0x([0-9a-fA-F]+)", text)
+    if not kb:
+        return
+    try:
+        word = bytes.fromhex(kb.group(1)).decode("utf-8")
+    except Exception:
+        return
+    if not (word and word.isalpha() and 2 <= len(word) <= 24):
+        return
+    ks = [ord(c) - 97 for c in word.lower()]
+    best = None
+    for s in range(0, min(8, len(text))):
+        j, out = 0, []
+        for c in text:
+            if c.lower() in string.ascii_lowercase:
+                if j < s:
+                    out.append(c); j += 1; continue
+                k = ks[(j - s) % len(ks)]
+                x = ord(c.lower()) - 97
+                out.append(chr((x - k) % 26 + (65 if c.isupper() else 97)))
+                j += 1
+            else:
+                out.append(c)
+        plain = "".join(out)
+        sc = _rank_score(plain)
+        pf = flag_plausibility(plain)
+        if best is None or max(sc, pf) > best[0]:
+            best = (max(sc, pf), plain)
+    if not best or not best[1]:
+        return
+    sc, plain = best
+    fo = _hint_flag_only(plain)
+    if fo:
+        yield fo, "hint-vigenere", {"key": word.upper(), "_statistical": True}, .99
+        return
+    if flag_plausibility(plain) > 0 or sc >= .55:
+        claimed = .97 if flag_plausibility(plain) > 0 else max(.6, min(.95, sc))
+        yield plain, "hint-vigenere", {"key": word.upper(), "_statistical": True}, claimed

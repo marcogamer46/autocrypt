@@ -31,9 +31,9 @@ CASES = [
 ]
 
 
-def run(path):
-    args = ["python3", "autocrypt.py", str(path), "--timeout", "30",
-            "--json", "--top", "6"]
+def run(*paths):
+    args = ["python3", "autocrypt.py"] + [str(p) for p in paths] + \
+        ["--timeout", "30", "--json", "--top", "6"]
     t0 = time.time()
     r = subprocess.run(args, capture_output=True, text=True, timeout=90)
     wall = time.time() - t0
@@ -53,9 +53,12 @@ def main():
     print(f"{'CASE':5} {'RES':6} {'RANK':4} {'FIRST':>6} {'WALL':>6}  CHAIN | TOP vs EXPECTED")
     for name, flag in CASES:
         py = E3 / f"{name}_challenge.py"
-        out, wall, fe = run(py)
+        out_txt = E3 / f"{name}_output.txt"
+        # Primary: challenge source + output merged so source hints meet the
+        # ciphertext. Fall back to output alone if the merged run is thin.
+        out, wall, fe = run(py, out_txt)
         if len(out) < 3:
-            out2, wall2, fe2 = run(E3 / f"{name}_output.txt")
+            out2, wall2, fe2 = run(out_txt)
             wall += wall2
             fe = fe if fe is not None else fe2
             out = out2 if len(out2) > len(out) else out

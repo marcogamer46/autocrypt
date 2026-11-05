@@ -353,6 +353,18 @@ def solve_rsa_extra(data, ctx):
         pl = S._int_plain(m)
         yield pl, "RSA " + how, {"n_bits": n.bit_length()}, assess(pl)[0]
 
+    # Explicit prime factors from source hints (p1..pN / q1..qN): if their
+    # product equals the modulus, phi = prod(p-1) — no factoring needed.
+    # Checked BEFORE factoring so a large modulus never costs a slice.
+    given_primes = sorted({val for k, val in v.items() if re.fullmatch(r"(?:p|q)\d+", k)})
+    if len(given_primes) >= 2 and math.prod(given_primes) == n:
+        phi = 1
+        for pp in given_primes:
+            phi *= pp - 1
+        if math.gcd(e, phi) == 1:
+            yield from out(pow(c, pow(e, -1, phi), n),
+                           f"known-multi-prime ({len(given_primes)} factors)")
+            return
     # Multi-prime ("crowded") modulus: factor completely, phi = prod p^(k-1)(p-1).
     if not _is_prime(n):
         fa = factor_all(n, ctx)

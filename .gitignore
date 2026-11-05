@@ -1,5 +1,7 @@
 __pycache__/
 *.pyc
 tm.txt
+tm.py
+*_merged.txt
 *.log
 /tmp/

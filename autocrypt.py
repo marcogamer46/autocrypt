@@ -149,6 +149,14 @@ def build_parser():
 
 
 def main(argv=None):
+    # A recovered plaintext may contain bytes that the console codec (e.g.
+    # cp1252) cannot encode; replace them instead of crashing the whole run
+    # mid-report (seen on invalid U+FFFD in long-lost RSA/FR plaintexts).
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(errors="replace")
+        except (AttributeError, OSError, ValueError):
+            pass
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv and sys.stdin.isatty():
         from ui import interactive

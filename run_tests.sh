@@ -76,6 +76,9 @@ run_case "dlp512"        "$TMP/dlp512.txt"            "" "academy{dlp512_smooth}
 run_case "dlp1024"       "$TMP/dlp1024.txt"           "" "academy{dlp1024_smooth}"
 run_case "dlp_dec_g2"    "$TMP/dlp_dec_g2.txt"        "" "academy{dlp_dec_g2}"
 run_case "real_dlp"      "$TMP/real_dlp/output.txt"   "$TMP/real_dlp/gen.py" "Cracked DLP"
+run_case "multiprime"    "$TMP/multiprime_real/output.txt" "$TMP/multiprime_real/challenge.py" "picoCTF{mul71_rsa_0f2cedbf}"
+run_case "real_pqsum"    "real_challenges/sumoprimes/output.txt" "real_challenges/sumoprimes/gen.py" "picoCTF{pl33z_n0_g1v3_c0ngru3nc3_0f_5qu4r35_24929c45}"
+run_case "real_newcaesar" "real_challenges/newcaesar/output.enc" "real_challenges/newcaesar/new_caesar.py" "picoCTF{et_tu?_5723f4e71a0736d3b1d19dde4279ac03}"
 
 # heavy recurrence cases need > 25s in the full search; run with a 70s shell cap
 for REC_CASE in "real_seq|$TMP/real_seq/sequences.py|academy{g2_real_seq}" \
