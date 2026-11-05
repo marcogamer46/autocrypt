@@ -21,9 +21,32 @@ Result: 15/15 PASS at rank 0 (all recovered). The previous three failures
 
 These are now resolved; see LOGS.md for details. No E3 case remains unsolved.
 
+Reported challenges (2026-11-05) — user-provided inputs
+------------------------------------------------------
+* e=3 RSA ("e should be larger", N≈1006 digits, c≈1009 digits): RESOLVED.
+  c is an *unreduced* m^3 (a perfect cube) that exceeds N; the small-e exact
+  root path previously required c < n and never ran. Relaxed the gate to try
+  `_integer_root` whenever e ≤ 17, guarded by the exact check `m**e == c`
+  (safe — reduced ciphertexts aren't perfect e-th powers). Recovered
+  `academy{e_sh0u1d_b3_lArg3r_35f26e1a}` (space-padded; now surfaced at rank
+  0 as `RSA small-e exact root`).
+* Flag-shaped input whose body is ciphertext (`academy{xmjnndiboczmpwdxjiqaptvumw}`):
+  RESOLVED. autocrypt used to short-circuit to as-is (conf 0.99) and never
+  decode the body. Added a `flag-body-decode` solver + core as-is gating on
+  body plausibility: when the body isn't already plausible, it tries Caesar /
+  ROT13 / atbash / Vigenere and surfaces a decoded candidate. Now rank 0 via
+  `flag-body caesar(5)` → `academy{crossingtherubiconvfuyazrb}`. Genuine
+  plaintext flags are still returned unchanged.
+* e=65537 RSA, 270-bit modulus (~41-digit primes): UNRESOLVED (hard-factoring).
+  p−1 / p+1 / Fermat / Pollard rho all infeasible in pure Python for generic
+  135-bit factors; needs QS/GNFS or an external factoring tool. Documented
+  under Known limits below (out of scope for the auto-solver).
+
 Known limits (design documented in README "Known limits")
 ---------------------------------------------------------
 - Modern authenticated encryption / large-RSA general factoring: out of scope.
+  Generic semiprimes beyond ~192-bit (where p−1/p+1/rho/ECM are practical) are
+  deliberately not factored; such inputs need external QS/GNFS tooling.
 - 4-5-byte repeating-key XOR over ~20-char flags is inherently ambiguous; the
   xorfamily target is 7/10 accepted (rest are honest non-solves).
 - Source-hint propagation beyond the current static AST extraction is a planned

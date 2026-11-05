@@ -556,6 +556,88 @@ def solve_atbash(data, ctx):
         return
 
 
+_FLAG_BODY_SHELL_RE = re.compile(r"^([A-Za-z]+)\{([^{}\s]{1,300})\}$")
+_VIG_BUILTIN_KEYS = (
+    "key secret password flag ctf crypto cipher lemon pass admin hello world test "
+    "cat dog abc abcd picoctf secure vigenere caesar encrypt decrypt python hacker "
+    "cyber security academy pico thm htb root toor letmein qwerty").split()
+
+
+def _flag_body_prior(fp):
+    """Narrow: fire only when the whole input is a flag-shaped string
+    (letter-prefix `{` … `}`). Never fires on ordinary text/encodings."""
+    text = fp.get("_text", "")
+    if not _FLAG_BODY_SHELL_RE.search(text.strip()):
+        return 0.0
+    return 0.3
+
+
+def _flag_body_vig_decrypt(body, word):
+    ks = [ord(c) - 97 for c in word.lower()]
+    j = 0
+    out = []
+    for ch in body:
+        if "a" <= ch <= "z":
+            out.append(chr((ord(ch) - 97 - ks[j % len(ks)]) % 26 + 97))
+            j += 1
+        elif "A" <= ch <= "Z":
+            out.append(chr((ord(ch) - 65 - ks[j % len(ks)]) % 26 + 65))
+            j += 1
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+@solver("flag-body-decode", _flag_body_prior)
+def solve_flag_body_decode(data, ctx):
+    """If the input is already a flag whose *body* is NOT plausible English
+    (e.g. classical ciphertext inside a `{…}` shell), try simple decodes of
+    the body — all Caesar shifts (1..25, ROT13 is shift 13), atbash, and a
+    short Vigenere dictionary attempt — and surface any result clearly more
+    plausible than the original body, preserving the prefix{}/} shell. A
+    genuine, already-plausible plaintext flag is left untouched."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return
+    m = _FLAG_BODY_SHELL_RE.match(text.strip())
+    if not m:
+        return
+    prefix, body = m.group(1), m.group(2)
+    full = f"{prefix}{{{body}}}"
+    orig_plaus = flag_plausibility(full)
+    if orig_plaus >= 0.5 or english_confidence(body) >= 0.5:
+        return
+    best = []  # (flag_plausibility, english_conf, decoded_body, method)
+    for k in range(1, 26):          # Caesar shifts; ROT13 == shift 13
+        db = _letter_shift(body, lambda x, k=k: x + k)
+        if db != body:
+            cf = f"{prefix}{{{db}}}"
+            best.append((flag_plausibility(cf), english_confidence(db), db,
+                         f"flag-body caesar({k})"))
+    db = _letter_shift(body, lambda x: 25 - x)   # atbash
+    if db != body:
+        cf = f"{prefix}{{{db}}}"
+        best.append((flag_plausibility(cf), english_confidence(db), db,
+                     "flag-body atbash"))
+    for word in _VIG_BUILTIN_KEYS + list(ctx.wordlist[:200]):
+        db = _flag_body_vig_decrypt(body, word)
+        if db != body:
+            cf = f"{prefix}{{{db}}}"
+            best.append((flag_plausibility(cf), english_confidence(db), db,
+                         f"flag-body vigenere({word.upper()})"))
+    best.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    emitted = set()
+    for plaus, ec, db, method in best:
+        # Only surface candidates clearly more plausible than the original body.
+        if plaus - orig_plaus >= 0.15 or ec >= 0.4:
+            if db in emitted:
+                continue
+            emitted.add(db)
+            claim = min(0.97, 0.62 + 0.35 * min(1.0, plaus))
+            yield f"{prefix}{{{db}}}", method, {}, claim
+
+
 @solver("affine", lambda fp: _text_prior(fp))
 def solve_affine(data, ctx):
     try:
@@ -2070,9 +2152,14 @@ def solve_rsa(data, ctx):
                         return
             except (TypeError, ValueError):
                 pass
-        if c >= 0 and c < n and e <= 17:
+        # Small exponent: recover via an exact integer root. Earlier this only
+        # ran when c < n, but some challenges publish an *unreduced* m^e (a
+        # perfect e-th power) that exceeds n (e.g. picoCTF-style "e should be
+        # larger"). The exact check m**e == c gates false positives on properly
+        # reduced RSA, so it is safe to attempt whenever e is small.
+        if c >= 0 and e <= 17:
             m = _integer_root(c, e)
-            if m is not None:
+            if m is not None and m ** e == c:
                 yield from _emit(ctx, _int_plain(m), "RSA small-e exact root",
                                  {"n": n, "e": e, "c": c, "m": m})
         if c < n and e > 1:

@@ -35,6 +35,11 @@ _KNOWN_PREFIXES = (
     "dvctf{", "cyberhub{", "uiuctf{", "lactf{", "tjctf{", "corctf{", "sekai{",
     "justctf{", "idek{", "csc{", "n00bz{", "hkcert{", "fcsc{", "bctf{", "wgmy{",
 )
+# A known-prefix flag whose body has plausibility below this is not treated as
+# genuine plaintext (e.g. the body may be classical ciphertext inside the
+# shell). The as-is row is still reported, but the search continues so a
+# decode of the inner body gets a chance to surface above it.
+_ASIS_BODY_PLAUSIBLE = 0.5
 
 
 SolverFn = Callable[[bytes, "Context"], Iterable[tuple[bytes | str, str, dict, float]]]
@@ -499,8 +504,15 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                       "_reason": f"Input is already flag-shaped; body plausibility {id_plaus:.2f}.",
                       "_raw": data}
             if id_match.group(0).lower().startswith(_KNOWN_PREFIXES) and top > 0:
-                id_rec["confidence"] = .99
-                return SearchResult([id_rec], "FOUND", ctx.failures)
+                if id_plaus >= _ASIS_BODY_PLAUSIBLE:
+                    # A genuine, already-plausible known-prefix flag passes
+                    # through unchanged (no false decodes of the body).
+                    id_rec["confidence"] = .99
+                    return SearchResult([id_rec], "FOUND", ctx.failures)
+                # The body is NOT plausible plaintext (e.g. classical ciphertext
+                # inside the shell): keep the as-is row ranked at the .96 floor
+                # and continue the search so a decode of the inner body can
+                # surface above it.
             results[data] = id_rec
     except Exception:
         pass
@@ -768,11 +780,42 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                         if ctx.flag_regex_explicit or ctx.flag_regex.pattern != r"\w{1,40}\{.*?\}":
                             is_flag = True    # user-supplied pattern is authoritative
                         elif printable_ok:
-                            exact_decode = (method.split("(", 1)[0].lower().strip() in decoder_names
-                                            and not input_flag)
+                            _is_decoder = method.split("(", 1)[0].lower().strip() in decoder_names
+                            exact_decode = (_is_decoder and not input_flag)
+                            # A candidate byte-identical to the original input
+                            # (e.g. affine(a=1,b=0), a degenerate identity
+                            # transform, or an even-length round-trip chain) is
+                            # an echo, not a recovery: never treat it as a
+                            # confirmed flag. Compare against the root `data`
+                            # so chained transforms that return to the input
+                            # are also caught.
+                            _echo = bool(text.strip() == data.decode("utf-8", "replace").strip())
+                            # When the input is ALREADY a flag, a classical letter
+                            # transform (Caesar/ROT/atbash, digit-only shifts, ...)
+                            # can restyle the junk body into another flag-shaped
+                            # string without decoding anything. Only treat such a
+                            # known-prefix candidate as a *confirmed* flag when it
+                            # is an exact decoder/recovery or genuinely improves
+                            # body plausibility; otherwise rank it as flag-shaped
+                            # (demoted by the echo/consistency gates) instead of
+                            # short-circuiting the search.
+                            # The strict "must improve the body" rule only applies
+                            # when the flag shape traces back to the ORIGINAL input
+                            # (no genuine decoder step recovered it); a flag that
+                            # was properly decoded is trusted regardless of the
+                            # final transform (e.g. a confirming identity-XOR).
+                            _has_decoder_step = bool(
+                                _is_decoder
+                                or any(s.split("(", 1)[0].lower().strip() in decoder_names
+                                       for s in chain))
+                            _classical_on_flag = bool(
+                                input_flag and not _has_decoder_step and not recovered)
+                            _improved_body = flag_plausibility(text) > input_plaus + 0.05
                             if ((match_text.lower().startswith(_KNOWN_PREFIXES) or recovered)
+                                    and not _echo
                                     and (is_flagish(text) or _flagout_ok)
-                                    and len(match_text) >= 0.9 * max(1, len(re.sub(r"\s", "", text)))):
+                                    and len(match_text) >= 0.9 * max(1, len(re.sub(r"\s", "", text)))
+                                    and (not _classical_on_flag or _improved_body)):
                                 is_flag = True
                             elif is_flagish(text):
                                 method_name = method.split("(", 1)[0].lower().strip()

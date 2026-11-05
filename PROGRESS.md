@@ -148,3 +148,29 @@
   test_multijob 38/38 equal. No collateral failures.
 - Created `things_it_cant_solve.txt` tracker (mutated c01/c08/c14; lists the
   remaining documented known limits).
+
+## Session 11 (2026-11-05) — reported challenges: e=3 RSA, flag-body cipher
+
+- e=3 RSA ("e should be larger", N≈1006 digits, c≈1009 digits): the small-e
+  exact-root path in `solve_rsa` required `c < n`, so an *unreduced* m^3 (a
+  perfect cube) that exceeds n was never tried. Relaxed the gate to attempt
+  `_integer_root` whenever e ≤ 17, guarded by the exact `m**e == c` check
+  (safe; reduced ciphertexts are not perfect powers). Now recovers
+  `academy{e_sh0u1d_b3_lArg3r_35f26e1a}` at rank 0.
+- Flag-shaped input whose body is ciphertext (`academy{xmjnndiboczmpwdxjiqaptvumw}`):
+  autocrypt short-circuited to the as-is row (conf 0.99) and never decoded the
+  body. Fixed in core.py + solvers.py: the known-prefix early return is now
+  gated on body plausibility (`_ASIS_BODY_PLAUSIBLE`), keeping the as-is row at
+  the 0.96 floor and continuing the search; `is_flag` confirmation rejects echo
+  (byte-identical) candidates and only confirms classical transforms of an
+  already-flag-shaped input when they improve body plausibility. New
+  `flag-body-decode` solver tries Caesar/ROT13/atbash/Vigenere on non-plausible
+  bodies and preserves the `prefix{}/}` shell. Target now rank 0 via
+  `flag-body caesar(5)` → `academy{crossingtherubiconvfuyazrb}`; genuine
+  plaintext flags still pass through unchanged.
+- e=65537 RSA with a 270-bit modulus (generic 135-bit primes): documented as
+  unresolved hard-factoring (p−1/p+1/Fermat/rho infeasible in pure Python; out
+  of scope). Added to things_it_cant_solve.txt and README known-limit note.
+- Regressions: run_tests 43/43; matrix 22/22; fuzz 12/12; multijob 38/38;
+  flagshape OK; E3 recovered across the last (c14 remains the pre-existing
+  harness echo-heuristic "rank0" label, unchanged).

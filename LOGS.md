@@ -248,3 +248,13 @@ All work performed on 2026-10-31 (single continuous engagement).
 | Docs | Created `things_it_cant_solve.txt` live tracker (resolved c01/c08/c14; documented known limits). | things_it_cant_solve.txt | — |
 
 Final verification: run_tests 43/43, matrix 22/22, fuzz 12/12, multijob 38/38, E3 15/15.
+
+## Session 13 — reported challenges: e=3 RSA + flag-body cipher
+
+| Step | What changed | Files | Verified |
+|------|--------------|-------|----------|
+| e=3 RSA | Relaxed the small-e exact-root gate in `solve_rsa`: previously required `c < n`, so an unreduced m^3 (perfect cube) exceeding n was never tried. Now attempts `_integer_root` when e ≤ 17, guarded by exact `m**e == c`. | solvers.py | rank #0 `academy{e_sh0u1d_b3_lArg3r_35f26e1a}` |
+| flag-body | Known-prefix early return in core now gated on body plausibility (keeps as-is at 0.96 and continues search when the body is ciphertext); `is_flag` confirmation rejects echoes + only confirms classical transforms of an already-flag-shaped input when the body improves. New `flag-body-decode` solver tries Caesar/ROT13/atbash/Vigenere on non-plausible bodies. | core.py, solvers.py | `academy{xmjnndiboczmpwdxjiqaptvumw}` → rank #0 `academy{crossingtherubiconvfuyazrb}` |
+| 270-bit RSA | Documented as unresolved hard-factoring (generic 135-bit primes; p−1/p+1/Fermat/rho infeasible in pure Python). | things_it_cant_solve.txt | — |
+
+Final verification: run_tests 43/43, matrix 22/22, fuzz 12/12, multijob 38/38, flagshape OK, E3 recovered.
