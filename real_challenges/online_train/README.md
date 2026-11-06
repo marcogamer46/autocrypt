@@ -28,7 +28,7 @@ PATH="$PWD/.venv/Scripts:$PATH" python autocrypt.py \
 | Mini_RSA | PicoCTF 2021 | RSA e=3 overflow | ✅ solved (small-e cube-root) |
 | Easy_Peasy | PicoCTF 2021 | OTP | ⛔ excluded — plaintext flag present |
 | New_Caesar | PicoCTF 2021 | b16+shift | ⛔ excluded — source embeds solve code |
-| New_Vignere | PicoCTF 2021 | Vigenere | 🕑 TODO — source only, no ciphertext |
+| New_Vignere | PicoCTF 2021 | b16+shift-Vigenere | 🕑 has `b16-shift-vigenere` solver; target ciphertext absent |
 | Double_DES | PicoCTF 2021 | DES | 🚫 out of scope |
 | Sum-O-Primes | PicoCTF 2022 | RSA p+q | ✅ solved |
 | Very Smooth | PicoCTF 2022 | RSA smooth p−1 | ✅ solved (p−1) |

@@ -92,6 +92,11 @@ Real online-training challenges (2026-11-05/06) — resolved gaps
   `sample-keystream-xor` solver. The source embeds a sample plaintext + its
   hex ciphertext + the flag's hex ciphertext under one repeating key;
   autocrypt now recovers the key from the sample and decrypts the flag.
+* New_Vignere (picoCTF 2021, b16 + shift-Vigenere family) — a new
+  `b16-shift-vigenere` solver now handles this scheme (verified against a
+  synthesized New_Vignere-style bundle; the real challenge file here has no
+  target ciphertext, only a `correctOut` example, so it stays "incomplete"
+  rather than resolved).
 * mindreader (CSAW Red 2020) — out of scope (interactive). AES-OFB with a
   constant key+IV across calls ⇒ keystream reuse; chosen-plaintext recovers the
   keystream and XORs with the flag ciphertext. Requires a live network client,

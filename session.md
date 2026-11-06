@@ -193,3 +193,25 @@ User decision (2026-11-05): **Install tools & retry**. ✅
 - `Sequences/sequences.py`: raw generator but a heavy compute-and-check linear
   recurrence (order-4, 2e7-th term, MD5-verified, SHA256-XOR); documented, not
   a static-decode target.
+
+## Session 20 (2026-11-06) — b16-shift-vigenere solver + repo tidy
+- Tidy commit: added `real_challenges/online_train/README.md` manifest
+  (20 challenges, run line, legend) and tightened `.gitignore` (raw bundles
+  stay local; tracked challenge files still versioned).
+- Added `@solver("b16-shift-vigenere")` for the picoCTF New_Caesar /
+  New_Vignere family: base-16 encode each byte to two symbols over
+  `abcdefghijklmnop`, then Vigenere-shift mod 16 by a key symbol. The b16
+  structure is an oracle (first-of-pair symbol ⇒ printable-ASCII high nibble
+  ∈ {2..7}), letting the solver backtrack the key for any period < 15.
+  - Known-flag-prefix + leet-body dictionary fraction drive final candidate
+    selection (`_rank_score` alone overvalues `...{...}`-shaped text).
+  - Prior 0.72 (specific fingerprint: ≥85% a..p letters, even length).
+  - Verified against a synthesized bundle using the exact New_Vignere scheme
+    (`test_b16_shift_vigenere.py`): direct + pipeline rank-0 recovery of
+    `academy{b16_shift_vigenere_gea}` at key `klmnop`/period 6.
+  - Note: autocrypt's search overruns its nominal deadline (~52s vs 30s), so
+    the b16 candidate only surfaces when the budget is large enough; this is
+    a pre-existing property, not specific to this solver.
+- `base36-caesar`: decodes yielding a known-prefix flag inside plausible
+  English now carry claim ≥ 0.97 (can outrank an as-is flag-shaped row).
+- Regression maintained 43/43 PASS.

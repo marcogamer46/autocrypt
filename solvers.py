@@ -621,6 +621,132 @@ def solve_base36_caesar(data, ctx):
         yield out, method, params, claim
 
 
+# picoCTF-style "b16 + shift" Vigenere over the 16-letter alphabet
+# abcdefghijklmnop: each plaintext byte is base-16 encoded as two symbols
+# (high/low nibble -> a..p), then each symbol is shifted by a key symbol with
+# a Vigenere-reduced mod 16 (New_Caesar / New_Vignere family). The b16
+# structure is a strong oracle: every first-of-pair symbol must decode to a
+# printable-ASCII high nibble in {2..7}, which collapses the key space so we
+# can backtrack a key of any feasible period < 15.
+_B16_ALPHA = "abcdefghijklmnop"
+_B16_HIGH = frozenset(range(2, 8))  # high nibbles of 0x20..0x7E
+
+
+def _b16_shift_prior(fp):
+    if fp.get("charset") != "ascii-text":
+        return 0.0
+    t = fp.get("_text", "")
+    nospace = re.sub(r"\s", "", t)
+    if not 8 <= len(nospace) <= 600:
+        return 0.0
+    letters = [c for c in t.lower() if c in _B16_ALPHA]
+    if not 8 <= len(letters) <= 600 or len(letters) % 2:
+        return 0.0
+    if len(letters) / max(1, len(nospace)) < 0.85:
+        return 0.0
+    # Very specific fingerprint (>=85% a..p letters, even length): a strong
+    # prior that still sits below the RSA/known-plaintext solvers but above
+    # the generic classical-cipher ones, so it isn't starved by budget.
+    return 0.72
+
+
+@solver("b16-shift-vigenere", _b16_shift_prior)
+def solve_b16_shift_vigenere(data, ctx):
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return
+    letters = [ord(c) - 97 for c in text.lower() if c in _B16_ALPHA]
+    L = len(letters)
+    if L < 8 or L % 2 or L > 3000:
+        return
+
+    def decode_score(keyval):
+        out_chars = []
+        for i in range(0, L, 2):
+            vh = (letters[i] - keyval[i % p]) % 16
+            vl = (letters[i + 1] - keyval[(i + 1) % p]) % 16
+            b = vh * 16 + vl
+            if not 32 <= b <= 126:
+                return -1.0, ""
+            out_chars.append(chr(b))
+        out = "".join(out_chars)
+        return _rank_score(out), out
+
+    best = None
+    max_p = min(14, L // 2)
+    for p in range(1, max_p + 1):
+        cand, free = [], []
+        for r in range(p):
+            s = set(range(16))
+            has_even = False
+            i = r
+            while i < L:
+                if i % 2 == 0:
+                    has_even = True
+                    s &= {(letters[i] - v) % 16 for v in _B16_HIGH}
+                i += p
+            if not s:
+                break
+            if has_even:
+                cand.append((r, sorted(s)))
+            else:
+                free.append(r)
+        if len(cand) + len(free) < p:
+            continue
+        constrained_product = 1
+        for _r, s in cand:
+            constrained_product *= len(s)
+        if constrained_product > 50000:
+            continue  # even constrained half is too large to explore
+        # Full enumeration when feasible (covers even periods up to ~p=6);
+        # otherwise use a greedy per-free-residue optimization for the odd
+        # (low-nibble-only) key symbols, which don't affect printability.
+        full_combos = constrained_product * (16 ** len(free))
+        domains = [s for _r, s in cand] + [list(range(16)) for _ in free]
+        residues = [r for r, _ in cand] + free
+        if full_combos <= 1_200_000:
+            keys = itertools.product(*domains)
+        else:
+            # Greedy: enumerate constrained residues, optimize free residues one
+            # at a time (each only touches disjoint odd positions).
+            def _gen():
+                for cvals in itertools.product(*[s for _r, s in cand]):
+                    keyval = dict(zip([r for r, _ in cand], cvals))
+                    for r in free:
+                        keyval[r] = 0
+                    for _pass in range(3):
+                        for r in free:
+                            bestv, bestsc = keyval[r], -1.0
+                            for v in range(16):
+                                keyval[r] = v
+                                sc, _t = decode_score(keyval)
+                                if sc > bestsc:
+                                    bestsc, bestv = sc, v
+                            keyval[r] = bestv
+                    yield tuple(keyval[r] for r in [rr for rr, _ in cand] + free)
+            keys = _gen()
+        for values in keys:
+            keyval = dict(zip(residues, values))
+            sc, out = decode_score(keyval)
+            if sc <= 0:
+                continue
+            fb = 1.0 if _hint_flag_only(out) else 0.0
+            # `_rank_score` can overvalue `...{...}`-shaped printable text, so
+            # rank by (known-flag-prefix, flag-body dictionary coverage, score):
+            # a correct decode reads as words in the flag body, a wrong one
+            # rarely does.
+            leet = leet_body_dict_fraction(out)
+            if best is None or (fb, leet, sc) > (best[1], best[2], best[0]):
+                best = (sc, fb, leet, out, p,
+                        tuple(_B16_ALPHA[keyval[r]] for r in range(p)))
+    if best is None:
+        return
+    sc, fb, leet, out, p, keychars = best
+    claim = max(sc, 0.95) if fb else max(sc, 0.75)
+    yield out, "b16-shift-vigenere", {"period": p, "key": "".join(keychars)}, claim
+
+
 _FLAG_BODY_SHELL_RE = re.compile(r"^([A-Za-z]+)\{([^{}\s]{1,300})\}$")
 _VIG_BUILTIN_KEYS = (
     "key secret password flag ctf crypto cipher lemon pass admin hello world test "
