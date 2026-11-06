@@ -92,4 +92,60 @@ User decision (2026-11-05): **Install tools & retry**. ✅
   - `NSA_Backdoor` (picoCTF 2022): ✅ served `picoCTF{cf58a7b8}` via "Cracked DLP (smooth composite)" path (flag body plausible; treat as provisional — DLP solver path, not RSA p−1). Verify against official later.
   - `Very_Smooth` (picoCTF 2022): ❌ failed (garbage). Needs Pollard p−1 with B≈2^16; autocrypt's p−1 didn't fire / B too small. Gap → TODO: raise p−1 B or add smooth-prime heuristic when source shows `get_smooth_prime`.
   - `New_Vignere` (picoCTF 2021): no separate output.txt (embedded `correctOut` in source); TODO.
-- Regression: full `run_tests.sh` running (43 cases) — awaiting result to confirm the two code changes are non-breaking.
+- **Session 15 (2026-11-06) — two gap fixes:**
+  1. `Very_Smooth` ✅ SOLVED → `picoCTF{94287e17}`. Root cause: `factor_all` in
+     `solvers_more.py` skipped p−1 entirely for moduli >480 bits (hard `else`).
+     Fix: for large moduli, still try `_pm1_with_checkpoints(x, 131072, ctx)`
+     (cost scales with B, not modulus size) then `_pp1` before giving up.
+     Verified: p−1 B=65536 recovers the 1024-bit smooth factor on raw n; full
+     autocrypt on `real_challenges/online_train/Very_Smooth/` emits the flag.
+  2. `XtraORdinary` ✅ SOLVED → `picoCTF{w41t_s0_1_d1dnt_1nv3nt_x0r???}`.
+     Pattern: source XORs a list of literal byte-strings (`random_strs`) over the
+     ciphertext a variable number of times (parity ⇒ subset). Fix:
+     - `challenge.py`: `analyze_source` now returns a 7th value `byte_pads`
+       (scans `ast.List`/`ast.Tuple` of str/bytes Constants); `load()` emits
+       `xor_pads=<hex,hex,...>` hint.
+     - `solvers_more.py`: `@solver("xor-literal-pads")` enumerates pad subsets,
+       strips them, cracks the residual repeating-key XOR via cheap direct
+       prefix-key recovery (`_crack_repeating_crib`), yields best. ~1s.
+- Regression: `run_tests.sh` 43/43 after the `factor_all` p−1 change (verified).
+  Full regression re-run after xor-literal-pads change in flight.
+
+## Session 16 (2026-11-06) — more real-CTF training + RSA solver addition
+- **Code changes:**
+  1. `solvers.py`: added "RSA small-e overflow cube-root" branch in `solve_rsa`
+     (BEFORE any factoring — cheap). For e<=5 with c<n, scan i in c+i·N for a
+     perfect e-th power. Recovers picoCTF Mini-RSA (e=3, reduced ciphertext).
+  2. `challenge.py` `_download_train.py` mirror: trained on 4 new raw pairs.
+- **Training results (raw challenges, no leaked flags):**
+  - `Sum-O-Primes` (picoCTF 2022): ✅ `picoCTF{126a94ab}` via RSA known p+q.
+  - `Mini_RSA` (picoCTF 2021): ✅ `picoCTF{e_sh0u1d_b3_lArg3r_a166c1e3}`
+    via new small-e overflow cube-root scan (i=3533).
+  - `Apple_Cider_Vinegar` (CSAW Red 2020): ❌ unsolved (Vigenere-like over a
+    shifted subset alphabet; need targeted solver later).
+  - `New_Caesar` / `xorly` / `Easy_Peasy`: missing companion ciphertext files
+    (Easy Peasy has plaintext flag file ⇒ excluded from raw training).
+- Regression: `run_tests.sh` 43/43 re-verified after the `factor_all` p−1
+  change, the xor-literal-pads solver, and the RSA small-e branch.
+  RSAPQFAMILY 10/10 (<2s), RSAFAMILY 10/10, RSAEXACTFAMILY 10/10,
+  RSAMULTIPRIMEFAMILY 10/10.
+
+## Session 17 (2026-11-06) — ACV diagnosis + final regression confirmation
+- Full regression re-run confirmed **43/43 PASS** (exit 0) with all Session
+  15/16 changes in place.
+- Attempted to close the `Apple_Cider_Vinegar` gap (CSAW Red 2020, raw
+  ciphertext only). Exhaustive cryptanalysis tried and ruled out:
+  - periodic Vigenere (periods 3-25, per-column chi-squared + quadgram
+    hill-climb + common-word scoring),
+  - Kasiski-derived period 3 (frequency solve gives gibberish),
+  - autokey Vigenere (seeds: apple, applecider, acv, vinegar, ...),
+  - Beaufort, key-advance-on-every-char variants,
+  - Caesar shifts, ROT13 (flag segment never yields `flag`),
+  - monoalphabetic substitution — impossible: flag ciphertext `ysiy` would
+    require y→f and y→g simultaneously.
+  Conclusion: consistent with a running-key / long-key cipher not crackable
+  from 271 alpha chars by statistics; needs key text or non-standard scheme.
+  Recorded as open gap in things_it_cant_solve.txt.
+- Cleaned up all session scratch scripts (`_acv*.py`, `_exp_*`, `_discover*`,
+  `_download2.py`, `_final_check.py`, `_solve_e5.py`, `_p1_brent.py`,
+  `_siqs_run.py`).

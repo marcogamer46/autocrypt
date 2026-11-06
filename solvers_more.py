@@ -2,7 +2,7 @@
 from __future__ import annotations
 import math, re, itertools
 from core import solver
-from scoring import assess, quadgram_score
+from scoring import assess, quadgram_score, plain_text_score, leet_body_dict_fraction, english_confidence
 import solvers as S
 
 
@@ -309,10 +309,23 @@ def factor_all(n, ctx):
         if x.bit_length() <= 480:
             d = r if r * r == x else (_pm1(x) or _pp1(x, ctx) or _rho(x, ctx) or _ecm(x, ctx))
         else:
-            # p-1/p+1/rho/ECM cannot meaningfully finish on huge moduli inside
-            # a per-solver budget; falling through to sympy (if present) or
-            # None is the only sane step.
+            # Large moduli: p-1/p+1/rho/ECM normally cannot finish inside a
+            # per-solver budget, BUT when a factor's p-1 is B-smooth (smooth-
+            # prime RSA CTFs like picoCTF Very_Smooth / NSA_Backdoor) a modest
+            # p-1 run with B=2^17 is cheap (cost scales with B, not modulus
+            # size). Try it before giving up on generic large semiprimes.
             d = r if r * r == x else None
+            if not d:
+                try:
+                    from solvers import _pm1_with_checkpoints
+                    d = _pm1_with_checkpoints(x, 131_072, ctx)
+                except Exception:
+                    d = None
+            if not d:
+                try:
+                    d = _pp1(x, ctx)
+                except Exception:
+                    d = None
         if not d:
             try:
                 from sympy import factorint
@@ -690,3 +703,125 @@ def solve_related(data, ctx):
                         if mm > 0:
                             yield S._int_plain(mm), f"RSA Franklin-Reiter related message {nm} (e={e})", {}, .95
                     return
+
+
+_CTF_PREFIXES = [b"picoCTF{", b"flag{", b"academy{", b"ctf{", b"FLAG{", b"flag", b"picoCTF"]
+
+
+def _flagaware_local(o):
+    """Flag-shape + leet-body score (mirrors solvers._flagaware)."""
+    txt = o.decode("latin-1")
+    base = plain_text_score(o, flag_bonus=True)
+    m = re.search(r"[A-Za-z0-9_]{2,30}\{[^{}\s]{1,300}\}", txt)
+    if m and (m.end() - m.start()) >= 0.9 * max(1, len(txt)):
+        body = m.group(0)[m.group(0).index("{") + 1:-1]
+        alnum = sum(c.isalnum() for c in body) / max(1, len(body))
+        base += 2.5 + 4.0 * leet_body_dict_fraction(body) + 0.6 * alnum
+    else:
+        ec = english_confidence(txt)
+        if ec >= 0.5:
+            base += 1.2 * ec + 0.5
+    return base
+
+
+def _xor_repeat(data, key):
+    return bytes(data[i] ^ key[i % len(key)] for i in range(len(data)))
+
+
+def _crack_repeating_crib(data, ctx):
+    """Return (score, key, plaintext) best guess for repeating-key XOR.
+    Cheap, deterministic: for each known CTF prefix and each key length L
+    covered by that prefix, derive the key directly (key[i] = data[i]^pre[i%L])
+    and score the decode. No coordinate ascent — fast enough to run inside the
+    subset enumeration."""
+    n = len(data)
+    if n < 12:
+        return None
+    best = None
+    maxL = min(16, n // 2)
+    for pre in _CTF_PREFIXES:
+        plen = len(pre)
+        if plen < 2:
+            continue
+        for L in range(2, min(maxL, plen) + 1):
+            key = bytes(data[i] ^ pre[i % L] for i in range(L))
+            o = _xor_repeat(data, key)
+            cur = _flagaware_local(o)
+            if best is None or cur > best[0]:
+                best = (cur, key, o)
+    return best
+
+
+def _strip_pads(ct, pads, subset):
+    """XOR out the repetition of each active pad (subset bitmask)."""
+    out = bytearray(ct)
+    for i, p in enumerate(pads):
+        if subset >> i & 1:
+            for j in range(len(ct)):
+                out[j] ^= p[j % len(p)]
+    return bytes(out)
+
+
+@solver("xor-literal-pads", lambda fp: (.98 if re.search(
+    r"(?m)^xor_pads=", fp.get("_text", "")) else 0.0))
+def solve_xor_literal_pads(data, ctx):
+    """Challenge ciphertext = (flag ^ repeating-key) XOR literal byte-string pads
+    from source (each applied an arbitrary number of times -> parity subset).
+    E.g. picoCTF XtraORdinary. Enumerate pad subsets, strip, crack the key."""
+    if ctx.depth > 0 or data is None:
+        return
+    _txt = data.decode("utf-8", "replace")
+    m = re.search(r"(?m)^xor_pads=(.+)", _txt)
+    if not m:
+        return
+    pad_hex = [h for h in m.group(1).split(",") if h]
+    pads = []
+    for h in pad_hex:
+        try:
+            b = bytes.fromhex(h)
+        except ValueError:
+            continue
+        if b:
+            pads.append(b)
+    if len(pads) < 2:
+        return
+    # Ciphertext: a hex/ascii blob preceding the hint line (or the whole data if
+    # no labels). Take the run of hex chars before "xor_pads=".
+    body = _txt.split("xor_pads=")[0]
+    oct_runs = re.findall(r"[0-9a-fA-F]{8,}", body)
+    if not oct_runs:
+        return
+    try:
+        ct = bytes.fromhex("".join(oct_runs))
+    except ValueError:
+        return
+    if len(ct) < 12 or len(ct) > 2000:
+        return
+    # Work budget: enumerate all subsets up to 12 pads (<=4096); beyond that,
+    # cap by preferring smaller subsets (higher prior) via a bounded search.
+    n_pads = len(pads)
+    if n_pads <= 12:
+        subsets = range(1 << n_pads)
+    else:
+        subsets = [0]
+        # single-pad + pairs (most likely), capped
+        subsets += [1 << i for i in range(n_pads)]
+        for i in range(n_pads):
+            for j in range(i + 1, n_pads):
+                subsets.append((1 << i) | (1 << j))
+                if len(subsets) > 8000:
+                    break
+    best = None
+    for subset in subsets:
+        if ctx.expired():
+            break
+        y = _strip_pads(ct, pads, subset)
+        r = _crack_repeating_crib(y, ctx)
+        if r and (best is None or r[0] > best[0]):
+            best = r
+    if best is None:
+        return
+    score, key, pt = best
+    # Yield the best candidate; if it looks flag-shaped and strong, it will win.
+    params = {"key_hex": key.hex(), "n_pads": n_pads}
+    yield pt, "xor-literal-pads", params, min(.97, .5 + score * 0.08)

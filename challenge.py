@@ -125,16 +125,19 @@ _LABEL_WHITELIST = {
 
 
 def analyze_source(src: str):
-    """Returns (constants, print_labels, findings, hex_labels, dlp_hint, byte_hints).
+    """Returns (constants, labels, findings, hex_labels, dlp_hint, byte_hints, byte_pads).
 
     `byte_hints` maps lowercased secret names (key/secret/password/salt) to the
     utf-8/raw hex of constant str/bytes assignments. `dlp_hint` may additionally
     carry {"a": int} for pow(g, <int literal>, n) calls (inline private exponent).
+    `byte_pads` lists literal str/bytes values found inside list/tuple literals
+    (e.g. `random_strs = [b'...', b'...']`), used by the xor-literal-pads solver.
     """
     consts, labels, findings = {}, [], []
     hex_labels = set()
     dlp_hint = {}
     byte_hints = {}
+    byte_pads = []
     try:
         tree = ast.parse(src)
     except SyntaxError as exc:
@@ -155,6 +158,19 @@ def analyze_source(src: str):
                     b = None
                 if b:
                     byte_hints[low] = b.hex()
+        elif isinstance(node, (ast.List, ast.Tuple)) and node.elts:
+            # Literal str/bytes arrays (e.g. random_strs = [b'...', b'...']):
+            # collect their byte values for the xor-literal-pads solver. Empty
+            # or non-literal lists are ignored.
+            pads = []
+            for el in node.elts:
+                if not (isinstance(el, ast.Constant) and isinstance(el.value, (str, bytes))):
+                    pads = None
+                    break
+                pads = (pads if pads is not None else [])
+                pads.append(el.value.encode("utf-8", "replace") if isinstance(el.value, str) else el.value)
+            if pads:
+                byte_pads.extend(pads)
         if isinstance(node, ast.Call):
             fn = getattr(node.func, "id", getattr(node.func, "attr", ""))
             if fn == "getPrime" and node.args and _number(node.args[0]):
@@ -201,7 +217,7 @@ def analyze_source(src: str):
             out.append(l)
     for m in re.finditer(r"\b(?:xor|AES|DES|Fernet|ChaCha|random|LFSR|lfsr|pow\(|getPrime|DSA|ECC|elgamal)\b", src):
         findings.append(f"source mentions '{m.group(0)}'")
-    return consts, out, list(dict.fromkeys(findings)), hex_labels, dlp_hint, byte_hints
+    return consts, out, list(dict.fromkeys(findings)), hex_labels, dlp_hint, byte_hints, byte_pads
 
 
 def _is_hex_format(node) -> bool:
@@ -293,10 +309,13 @@ def load(paths):
             blobs.append(b)
     if not src:
         return b"\n".join(blobs), [], ""
-    consts, labels, findings, hex_labels, dlp_hint, byte_hints = analyze_source(src)
+    consts, labels, findings, hex_labels, dlp_hint, byte_hints, byte_pads = analyze_source(src)
+    pad_hints = []
+    if byte_pads:
+        pad_hints.append("xor_pads=" + ",".join(p.hex() for p in byte_pads))
     data = b"\n".join(blobs)
     text = data.decode("utf-8", "ignore")
-    hint_lines = _hint_lines(text, consts, byte_hints, dlp_hint)
+    hint_lines = _hint_lines(text, consts, byte_hints, dlp_hint) + pad_hints
     # Direct labeled-line extraction ("n = 8c...", "c = ...") independent of
     # print-order counting.
     labeled_lines = []

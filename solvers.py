@@ -1928,7 +1928,7 @@ def _rsa_values(data, ctx):
                     break
                 except (ValueError, TypeError):
                     pass
-    normalized.update({k: v for k, v in values.items() if re.fullmatch(r"(?:n|e|c|p|q)\d+", k)})
+    normalized.update({k: v for k, v in values.items() if re.fullmatch(r"(?:n|e|c|p|q)\d*", k)})
     for key, value in list(normalized.items()):
         if isinstance(value, str):
             try:
@@ -2214,6 +2214,21 @@ def solve_rsa(data, ctx):
     if not ctx.rsa_params and n is not None and n < 256:
         return
     if n and e and c is not None and n > 1 and e > 0:
+        # Low exponent with reduction: when m^e >= n, c = m^e mod n, so m^e =
+        # c + i*n for some small i. Scan i BEFORE any factoring (cheap and
+        # decisive). e <= 5 keeps the scan bounded; e=3 is the classic picoCTF
+        # Mini-RSA shape. The exact m**e == c gate prevents false positives.
+        if 2 <= e <= 5 and c < n:
+            _cap = 250_000 if e == 3 else (1 << 12)
+            for i in range(_cap):
+                if ctx.expired():
+                    break
+                val = c + i * n
+                m = _integer_root(val, e)
+                if m is not None and m ** e == val:
+                    yield from _emit(ctx, _int_plain(m), "RSA small-e overflow cube-root",
+                                     {"n": n, "e": e, "c": c, "i": i, "m": m})
+                    break
         # Multi-prime RSA: source-hint primes p1..pN / q1..qN whose product
         # equals the modulus. Checked BEFORE factoring so a large composite
         # never costs a slice, and so the first (highest-prior) RSA solver
