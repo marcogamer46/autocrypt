@@ -556,6 +556,59 @@ def solve_atbash(data, ctx):
         return
 
 
+# Mixed alphanumeric Caesar: shift over a base-36 alphabet
+# "0123456789abcdefghijklmnopqrstuvwxyz". Catches challenges whose ciphertext
+# interleaves digits into words (e.g. CSAW "Caesar Salad Edition"):
+# y4tz{...} -> flag{...} is a +17 rotate on that alphabet.
+_ALNUM36 = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+
+def _alnum_caesar_prior(fp):
+    if fp.get("charset") != "ascii-text":
+        return 0.0
+    t = fp.get("_text", "")
+    n = len(t)
+    if n < 8 or n > 2000:
+        return 0.0
+    # Need a digit adjacent to a letter (alphanumeric cipher words), so a
+    # plain number or pure-hex blob is not tempted.
+    if not re.search(r"(?i)[a-z][0-9]|[0-9][a-z]", t):
+        return 0.0
+    frac = sum(1 for c in t.lower() if c in _ALNUM36) / max(1, n)
+    if frac < 0.7:
+        return 0.0
+    return 0.4
+
+
+@solver("base36-caesar", _alnum_caesar_prior)
+def solve_base36_caesar(data, ctx):
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return
+    if re.fullmatch(r"[0-9a-fA-F\s]+", text) and len(re.sub(r"\s", "", text)) >= 16:
+        # Pure hex/digest-looking blobs: not an alphanumeric Caesar.
+        return
+    variants = []
+    for k in range(1, 36):
+        out = []
+        for ch in text:
+            low = ch.lower()
+            idx = _ALNUM36.find(low)
+            if idx != -1:
+                rep = _ALNUM36[(idx + k) % 36]
+                out.append(rep.upper() if ch.isupper() else rep)
+            else:
+                out.append(ch)
+        variants.append(("".join(out), "base36-caesar", {"shift": k}))
+    ranked = sorted(((_rank_score(o), o, m, p) for o, m, p in variants),
+                    reverse=True, key=lambda x: x[0])
+    for i, (score, out, method, params) in enumerate(ranked[:3]):
+        if i == 0:
+            params["_relative_candidate"] = True
+        yield out, method, params, score
+
+
 _FLAG_BODY_SHELL_RE = re.compile(r"^([A-Za-z]+)\{([^{}\s]{1,300})\}$")
 _VIG_BUILTIN_KEYS = (
     "key secret password flag ctf crypto cipher lemon pass admin hello world test "

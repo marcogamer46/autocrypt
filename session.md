@@ -149,3 +149,21 @@ User decision (2026-11-05): **Install tools & retry**. ✅
 - Cleaned up all session scratch scripts (`_acv*.py`, `_exp_*`, `_discover*`,
   `_download2.py`, `_final_check.py`, `_solve_e5.py`, `_p1_brent.py`,
   `_siqs_run.py`).
+
+## Session 18 (2026-11-06) — base36-caesar solver (Caesar Salad Edition)
+- Downloaded raw `Caesar_Salad_Edition/challenge.txt` (CSAW Red 2020). It is
+  a mixed-alphanumeric Caesar: rotates over
+  `"0123456789abcdefghijklmnopqrstuvwxyz"` (shift +17 maps `y4tz{` → `flag{`).
+- Added `@solver("base36-caesar")` in solvers.py:
+  - `_alnum_caesar_prior`: fires only for ascii-text containing a digit
+    adjacent to a letter and ≥0.7 chars in the base36 alphabet.
+  - `solve_base36_caesar`: tries all 36 rotations, preserves case per char,
+    ranks by `_rank_score`, yields top 3.
+- Verified: direct solver recovers `flag{0lly_1s_th3_w3st3rosi_brutu5}`
+  exactly (shift 17). Added `test_base36_caesar.py` (direct + pipeline smoke).
+- Known caveat: in the full pipeline `as-is` still overclaims the raw
+  flag-shaped ciphertext at rank 0 for this flag-in-a-sentence input; the
+  base36 chain is engaged and the direct solver is exact. as-is gating for
+  non-plausible flag bodies in sentence context remains a TODO.
+- Also downloaded `unary_binary/` but EXCLUDED from training: its README
+  embeds the plaintext flag + full solve code (not raw).

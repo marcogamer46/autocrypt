@@ -79,6 +79,15 @@ Real online-training challenges (2026-11-05/06) — resolved gaps
 * Mini_RSA (picoCTF 2021) — RESOLVED → `picoCTF{e_sh0u1d_b3_lArg3r_a166c1e3}`
   via new "RSA small-e overflow cube-root" branch (e=3, reduced ciphertext,
   m^e = c + i·N for i=3533). Branch placed BEFORE factoring.
+* Caesar_Salad_Edition (CSAW Red 2020) — RESOLVED via new `base36-caesar`
+  solver → `flag{0lly_1s_th3_w3st3rosi_brutu5}`. The ciphertext interleaves
+  digits into words and rotates over a base-36 alphabet
+  `0123456789abcdefghijklmnopqrstuvwxyz` (+17 maps `y4tz{`→`flag{`). The
+  solver tries all 36 rotations and ranks by English/flag plausibility.
+  Caveat: in the full pipeline the `as-is` solver still overclaims the raw
+  flag-shaped ciphertext at rank 0 for this *flag-in-a-sentence* input; the
+  base36 chain is recovered and the direct solver is exact (see
+  test_base36_caesar.py).
 * Apple_Cider_Vinegar (CSAW Red 2020) — STILL OPEN. Diagnostic: 344-byte
   ciphertext; only 271 alpha chars. Not a trivial periodic Vigenere:
   chi-squared per-column solves fail at every period 3-25; Kasiski suggests
