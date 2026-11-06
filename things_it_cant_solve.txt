@@ -37,10 +37,15 @@ Reported challenges (2026-11-05) — user-provided inputs
   ROT13 / atbash / Vigenere and surfaces a decoded candidate. Now rank 0 via
   `flag-body caesar(5)` → `academy{crossingtherubiconvfuyazrb}`. Genuine
   plaintext flags are still returned unchanged.
-* e=65537 RSA, 270-bit modulus (~41-digit primes): UNRESOLVED (hard-factoring).
-  p−1 / p+1 / Fermat / Pollard rho all infeasible in pure Python for generic
-  135-bit factors; needs QS/GNFS or an external factoring tool. Documented
-  under Known limits below (out of scope for the auto-solver).
+* e=65537 RSA, 270-bit modulus (~41-digit primes): CHALLENGE RESOLVED via
+  external factoring (see LOGS.md Session 14). p−1 (B=1e6/1e7/1e8) / p+1
+  (B=1e7) / Fermat / trial-div(1e6/1e7) / Pollard-rho / ECM (B1≈100–200k,
+  8–12 curves) ALL exhausted in pure Python (no factor). Factored via
+  factordb (QS/GNFS-class): p=2074606527507983503944226222695401999839 (131
+  bits), q=659880377875535146491994798968813949893149 (139 bits). Decrypted
+  and reversed (challenge "_rev") → `academy{sma11_N_n0_g0od_a3ac7152}`.
+  Note: the native auto-solver still has no QS/GNFS path; this case needed an
+  external factoring lookup (kept under Known limits below for the solver).
 
 Known limits (design documented in README "Known limits")
 ---------------------------------------------------------

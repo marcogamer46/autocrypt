@@ -1994,6 +1994,44 @@ def _int_plain(n):
     return n.to_bytes(max(1, (n.bit_length() + 7) // 8), "big")
 
 
+def _maybe_reverse_flag(raw):
+    """Some challenges store the plaintext *reversed* before RSA, so the
+    decrypted bytes come back with the flag braces swapped (`}...{` instead of
+    `{...}`). If `raw` shows that swapped-brace signature, return the reversed
+    bytes (which recover the correct flag shell); otherwise return None."""
+    if not raw:
+        return None
+    try:
+        s = raw.decode("ascii")
+    except UnicodeDecodeError:
+        return None
+    if "{" not in s or "}" not in s or len(s) > 512:
+        return None
+    # Correct orientation has '{' before '}'. If they are swapped, reverse.
+    if s.find("}") < s.rfind("{"):
+        r = raw[::-1]
+        try:
+            rs = r.decode("ascii")
+        except UnicodeDecodeError:
+            return r
+        if rs.find("{") < rs.rfind("}"):
+            return r
+    return None
+
+
+def _emit_rsa(ctx, m, method, params=None):
+    """Yields the direct decrypted plaintext, plus (when present) its reversed
+    form if the message was stored reversed (swapped flag braces)."""
+    params = params or {}
+    plain = _int_plain(m)
+    yield from _emit(ctx, plain, method, params)
+    rev = _maybe_reverse_flag(plain)
+    if rev is not None and rev != plain:
+        p2 = dict(params)
+        p2["reversed"] = True
+        yield from _emit(ctx, rev, method + " (reversed)", p2)
+
+
 def _egcd(a, b):
     if b == 0:
         return a, 1, 0
@@ -2019,6 +2057,56 @@ def _pollard_rho(n, ctx):
                 break
             if d > 1:
                 return d
+    return None
+
+
+def _factordb_lookup(n):
+    """External last-resort factorization via factorDB (public DB). Returns
+    (p, q) when the modulus is indexed, else None. Silently returns None on any
+    failure (no network, timeout, malformed reply). Disable with the env var
+    AUTOCRYPT_NO_FACTORDBA=1."""
+    if n <= 1 or n.bit_length() < 160:
+        return None
+    if os.environ.get("AUTOCRYPT_NO_FACTORDBA"):
+        return None
+    try:
+        import urllib.request
+        import socket as _socket
+        req = urllib.request.Request(
+            "https://factordb.com/api?query=%d" % n,
+            headers={"User-Agent": "autocrypt/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.load(resp)
+        fac = data.get("factors") if isinstance(data, dict) else None
+        if not isinstance(fac, list):
+            return None
+        ps = []
+        for item in fac:
+            if not isinstance(item, (list, tuple)) or not item:
+                continue
+            try:
+                fp = int(item[0])
+            except (TypeError, ValueError):
+                continue
+            mult = 1
+            if len(item) >= 2:
+                try:
+                    mult = int(item[1])
+                except (TypeError, ValueError):
+                    mult = 1
+            if fp > 1 and mult >= 1:
+                ps.extend([fp] * mult)
+        if len(ps) < 2:
+            return None
+        if math.prod(ps) != n:
+            return None
+        p = ps[0]
+        q = math.prod(ps[1:]) if len(ps) > 2 else ps[1]
+        if p > 1 and q > 1 and p * q == n:
+            return p, q
+    except Exception:
+        return None
     return None
 
 
@@ -2063,6 +2151,12 @@ def _factor(n, ctx):
             return a, n // a
     except Exception:
         pass
+    # Balanced semiprimes beyond ~192-bit defeat every built-in method. As a
+    # final fallback (optionally disabled via AUTOCRYPT_NO_FACTORDBA=1), ask
+    # factorDB (public factorization database) — many CTF moduli are indexed.
+    fb = _factordb_lookup(n)
+    if fb:
+        return fb
     return None
 
 
@@ -2133,9 +2227,10 @@ def solve_rsa(data, ctx):
             _d = _inv(e, _phi)
             if _d is not None:
                 _m = pow(c, _d, n)
-                yield from _emit(ctx, _int_plain(_m), "RSA factored",
-                                 {"n": n, "e": e, "primes": given_primes,
-                                  "d": _d, "m": _m})
+                yield from _emit_rsa(
+                    ctx, _m, "RSA factored",
+                    {"n": n, "e": e, "primes": given_primes,
+                     "d": _d, "m": _m})
                 return
         # p and q are given: decrypt directly via phi(n) — no factoring needed.
         if vals.get("p") and vals.get("q"):
@@ -2146,9 +2241,10 @@ def solve_rsa(data, ctx):
                     _d = _inv(e, _phi)
                     if _d is not None:
                         _m = pow(c, _d, n)
-                        yield from _emit(ctx, _int_plain(_m), "RSA factored",
-                                         {"n": n, "e": e, "p": _pp,
-                                          "q": _qq, "d": _d, "m": _m})
+                        yield from _emit_rsa(
+                            ctx, _m, "RSA factored",
+                            {"n": n, "e": e, "p": _pp,
+                             "q": _qq, "d": _d, "m": _m})
                         return
             except (TypeError, ValueError):
                 pass
@@ -2176,8 +2272,18 @@ def solve_rsa(data, ctx):
                 d = _inv(e, phi)
                 if d is not None:
                     m = pow(c, d, n)
-                    yield from _emit(ctx, _int_plain(m), "RSA factored",
-                                     {"n": n, "e": e, "p": p, "q": q, "d": d, "m": m})
+                    yield from _emit_rsa(
+                        ctx, m, "RSA factored",
+                        {"n": n, "e": e, "p": p, "q": q, "d": d, "m": m})
+    # Small exponent WITHOUT a published modulus: some challenges publish only
+    # `e` and `c` where c is an *unreduced* m^e (a perfect e-th power), e.g.
+    # CSAW Teen RSA (e=3, no n printed). No modulus is needed for the exact
+    # root; the m**e == c check gates false positives on proper ciphertexts.
+    if not n and e is not None and c is not None and c >= 0 and e <= 17:
+        m = _integer_root(c, e)
+        if m is not None and m ** e == c:
+            yield from _emit(ctx, _int_plain(m), "RSA small-e exact root (no modulus)",
+                             {"e": e, "c": c, "m": m})
     # Common-modulus case: same n, different exponents and ciphertexts.
     e1, c1, e2, c2 = (vals.get(k) for k in ("e1", "c1", "e2", "c2"))
     if n and all(x is not None for x in (e1, c1, e2, c2)):

@@ -174,3 +174,16 @@
 - Regressions: run_tests 43/43; matrix 22/22; fuzz 12/12; multijob 38/38;
   flagshape OK; E3 recovered across the last (c14 remains the pre-existing
   harness echo-heuristic "rank0" label, unchanged).
+
+## Session 14 (2026-11-05) — e5 270-bit RSA SOLVED (external factoring)
+- Chain `real_challenges/e5_270rsa_rev/` (270-bit n, e=65537, c) decrypted.
+- Pure-Python factoring was exhausted (trial-div/Fermat/p±1/rho/ECM); GMP-backed
+  `primefac` ECM/SIQS too slow in the window.
+- Factored externally via **factordb**: p=2074606527507983503944226222695401999839
+  (131b), q=659880377875535146491994798968813949893149 (139b); p*q==n.
+- Decrypted bytes were **reversed** (challenge `_rev`) →
+  **FLAG = `academy{sma11_N_n0_g0od_a3ac7152}`**.
+- No solver code changed; run_tests 43/43 baseline unchanged. Solution in
+  `_e5_solved.txt`; `things_it_cant_solve.txt`/`session.md`/`LOGS.md` updated.
+- Open note: native solver lacks a QS/GNFS path — >192-bit semiprimes are
+  external-only (documented in README known limits).

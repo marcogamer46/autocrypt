@@ -258,3 +258,19 @@ Final verification: run_tests 43/43, matrix 22/22, fuzz 12/12, multijob 38/38, E
 | 270-bit RSA | Documented as unresolved hard-factoring (generic 135-bit primes; p−1/p+1/Fermat/rho infeasible in pure Python). | things_it_cant_solve.txt | — |
 
 Final verification: run_tests 43/43, matrix 22/22, fuzz 12/12, multijob 38/38, flagshape OK, E3 recovered.
+
+## Session 14 — e5 270-bit RSA solved (external factoring + reverse)
+
+- Challenge `real_challenges/e5_270rsa_rev/output.txt`: `n`=270 bits (82 digits), `e=65537`, `c`.
+- Pure-Python factoring exhausted (Session 13): trial-div 1e6/1e7, Fermat, p−1 @ 1e6/1e7/1e8, p+1 @ 1e7, Pollard-rho, ECM B1≈100–200k — no factor; consistent with a balanced ~135-bit semiprime.
+- Retried with installed `gmpy2`/`primefac` (ECM/SIQS) — slow (verbose trial division); no useful factor in the window.
+- **Factored externally via factordb** (QS/GNFS-class):
+  - `p = 2074606527507983503944226222695401999839` (131 bits)
+  - `q = 659880377875535146491994798968813949893149` (139 bits)
+  - `p*q == n` verified; `d = e^-1 mod φ`; `m = c^d mod n`.
+- Decrypted bytes are **reversed** (challenge `_rev`): raw `b'\n}2517ca3a_do0g_0n_N_11ams{ymedaca'` → reversed →
+  **FLAG = `academy{sma11_N_n0_g0od_a3ac7152}`**
+- Files: solution in `_e5_solved.txt`; `things_it_cant_solve.txt`, `session.md` updated.
+- Note: the native auto-solver has no QS/GNFS path; >192-bit semiprimes remain external-only (documented).
+
+Final verification: e5 solved; run_tests 43/43 baseline unchanged (no solver code changed this session).

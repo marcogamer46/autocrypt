@@ -6,10 +6,45 @@ import re
 from pathlib import Path
 
 
+_LABEL_HINTS = frozenset({
+    "n", "modulus", "mod", "n1", "n2", "e", "exponent", "e1", "e2", "e3",
+    "c", "ct", "c1", "c2", "c3", "ciphertext", "cipher", "enc", "encrypted",
+    "cyphertext", "cypher", "p", "q", "phi", "d", "dp", "dq", "m", "msg",
+    "message", "key", "keystream", "g", "iv", "nonce", "seed", "salt", "sig",
+    "signature", "hash", "digest", "password", "secret", "pub", "priv",
+    "public", "private", "proof", "challenge", "rand", "otp", "stream", "ks",
+})
+
+
+def _concat_label(node):
+    """Recover a crypto label from a print argument like `"e:" + str(e)` or
+    `"ciphertext = " + str(ct)` (BinOp Add of a banner string and a value).
+    Scans both operands for a recognized parameter name so `"e:"+str(e)`
+    labels as `e` instead of the generic `x1/x2`."""
+    if not (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add)):
+        return None
+    toks = []
+    if isinstance(node.left, ast.Constant) and isinstance(node.left.value, str):
+        toks += re.findall(r"[A-Za-z_]\w*", node.left.value)
+    right = node.right
+    if isinstance(right, ast.Call) and getattr(right.func, "id", "") == "str" and right.args:
+        right = right.args[0]
+    if isinstance(right, ast.Name):
+        toks.append(right.id)
+    for tk in toks:
+        low = tk.lower()
+        if low in _LABEL_HINTS:
+            return low
+    return None
+
+
 def _label(node, seen):
     """Map a print() argument expression to a solver-friendly label."""
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Sub):
         return "diff"
+    conc = _concat_label(node)
+    if conc is not None:
+        return conc
     if isinstance(node, ast.Call) and node.args and getattr(node.func, "id", "") in (
             "str", "hex", "int", "bytes_to_long", "long_to_bytes", "repr"):
         return _label(node.args[0], seen)
