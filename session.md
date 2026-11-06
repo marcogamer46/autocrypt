@@ -167,3 +167,7 @@ User decision (2026-11-05): **Install tools & retry**. ✅
   non-plausible flag bodies in sentence context remains a TODO.
 - Also downloaded `unary_binary/` but EXCLUDED from training: its README
   embeds the plaintext flag + full solve code (not raw).
+- Fetched `mindreader/` and `prettyplease/` (CSAW Red 2020): both are
+  INTERACTIVE AES-oracle server challenges (`mindreader`=AES-OFB constant
+  IV ⇒ keystream reuse; `prettyplease`=AES-CTR known (pt,ct,IV) ⇒ forgery).
+  Out of scope for autocrypt's static-file pipeline; documented, not trained.

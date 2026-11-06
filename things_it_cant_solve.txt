@@ -88,6 +88,13 @@ Real online-training challenges (2026-11-05/06) — resolved gaps
   flag-shaped ciphertext at rank 0 for this *flag-in-a-sentence* input; the
   base36 chain is recovered and the direct solver is exact (see
   test_base36_caesar.py).
+* mindreader (CSAW Red 2020) — out of scope (interactive). AES-OFB with a
+  constant key+IV across calls ⇒ keystream reuse; chosen-plaintext recovers the
+  keystream and XORs with the flag ciphertext. Requires a live network client,
+  not a static-file solver.
+* prettyplease (CSAW Red 2020) — out of scope (interactive). AES-CTR with a
+  known (pt,ct,IV) triple ⇒ derive that IV's keystream and forge a token that
+  decrypts to "Your application has been ACCEPTED". Requires live interaction.
 * Apple_Cider_Vinegar (CSAW Red 2020) — STILL OPEN. Diagnostic: 344-byte
   ciphertext; only 271 alpha chars. Not a trivial periodic Vigenere:
   chi-squared per-column solves fail at every period 3-25; Kasiski suggests
