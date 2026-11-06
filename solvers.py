@@ -1797,6 +1797,84 @@ def solve_xor_crib(data, ctx):
                     return
 
 
+_HEX_BLOB_RE = re.compile(r"(?<![0-9a-fA-F])(?:[0-9a-fA-F]{2}){8,}(?![0-9a-fA-F])")
+_SAMPLE_SENT_RE = re.compile(r"[\"']([A-Za-z][A-Za-z0-9 .,'!?\-:;]{15,})[\"']")
+
+
+def _sample_ks_prior(fp):
+    if fp.get("charset") != "ascii-text":
+        return 0.0
+    t = fp.get("_text", "")
+    if len(t) < 200:
+        return 0.0
+    if not _SAMPLE_SENT_RE.search(t):
+        return 0.0
+    if len(_HEX_BLOB_RE.findall(t)) < 2:
+        return 0.0
+    return 0.5
+
+
+@solver("sample-keystream-xor", _sample_ks_prior)
+def solve_sample_keystream_xor(data, ctx):
+    """Recover a repeating-key XOR keystream from a source that provides a
+    known sample plaintext together with its ciphertext (hex) and the target
+    ciphertext (hex) under the same key — e.g. xorly's
+    `Plaintext: "..." / Ciphertext: <hex> / Flag: <hex>` pattern."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return
+    sents = _SAMPLE_SENT_RE.findall(text)
+    blobs = [b for b in _HEX_BLOB_RE.findall(text)]
+    if not sents or len(blobs) < 2:
+        return
+    pt_bytes = max(sents, key=len).encode("utf-8")
+
+    def _tb(h):
+        try:
+            return bytes.fromhex(h)
+        except Exception:
+            return None
+
+    ct_cand, others = None, []
+    for h in blobs:
+        b = _tb(h)
+        if b is None:
+            continue
+        if len(b) == len(pt_bytes):
+            ct_cand = b
+        else:
+            others.append(b)
+    if ct_cand is None:
+        # fallback: assume the longest hex blob is the sample ciphertext
+        ct_cand = max(others, key=len)
+        others = [b for b in others if b is not ct_cand]
+    if not ct_cand or not others:
+        return
+    ks = bytes(a ^ b for a, b in zip(pt_bytes, ct_cand))
+    if not ks:
+        return
+    results = []
+    for size in range(1, min(len(ks), 64) + 1):
+        key = ks[:size]
+        for target in others:
+            out = _xor(target, key)
+            sc = _rank_score(out)
+            results.append((sc, size, key, out))
+    if not results:
+        return
+    seen, yielded = set(), 0
+    for sc, size, key, out in sorted(results, reverse=True):
+        if out in seen:
+            continue
+        seen.add(out)
+        claim = max(0.7, min(0.985, sc))
+        yield out, "sample-keystream xor", {"key_hex": key.hex(), "period": size}, claim
+        yielded += 1
+        if yielded >= 3:
+            break
+
+
 @solver("many-time-pad", lambda fp: .25 if fp["length"] >= 16 else 0)
 def solve_many_time_pad(data, ctx):
     # Accept newline-separated hex ciphertexts, one per line.

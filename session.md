@@ -171,3 +171,25 @@ User decision (2026-11-05): **Install tools & retry**. ✅
   INTERACTIVE AES-oracle server challenges (`mindreader`=AES-OFB constant
   IV ⇒ keystream reuse; `prettyplease`=AES-CTR known (pt,ct,IV) ⇒ forgery).
   Out of scope for autocrypt's static-file pipeline; documented, not trained.
+
+## Session 19 (2026-11-06) — sample-keystream-xor solver (xorly)
+- Workflow corrected per user: feed raw challenges to autocrypt itself, do NOT
+  hand-decrypt; improve the tool where it fails.
+- Ran autocrypt on raw `xorly/xorly.py` (redpwn-style): it failed (echo + url
+  decode). Root cause: no solver connected the embedded sample plaintext, its
+  hex ciphertext, and the flag hex ciphertext under one repeating key.
+- Added `@solver("sample-keystream-xor")` in solvers.py:
+  - `_sample_ks_prior`: fires on ascii-text containing a quoted sentence and
+    ≥2 hex blobs.
+  - `solve_sample_keystream_xor`: extracts the longest quoted English sentence
+    + hex blobs; one blob matching the sentence byte-length ⇒ sample ct (fall
+    back to longest blob); recovers keystream = pt XOR ct; for each period
+    1..len(ks) decrypts the OTHER blob(s) and ranks by English/flag
+    plausibility.
+  - autocrypt now recovers `flag{xor_is_the_new_aes}` at rank 0 (key `fish`).
+- Added `test_sample_keystream_xor.py` (pipeline rank-0 assertion).
+- `New_Caesar/new_caesar.py` EXCLUDED: it embeds the solve code (key + print
+  loop) — not raw. Same policy as solv.py/unary_binary/Easy_Peasy.
+- `Sequences/sequences.py`: raw generator but a heavy compute-and-check linear
+  recurrence (order-4, 2e7-th term, MD5-verified, SHA256-XOR); documented, not
+  a static-decode target.

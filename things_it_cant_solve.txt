@@ -88,6 +88,10 @@ Real online-training challenges (2026-11-05/06) — resolved gaps
   flag-shaped ciphertext at rank 0 for this *flag-in-a-sentence* input; the
   base36 chain is recovered and the direct solver is exact (see
   test_base36_caesar.py).
+* xorly (redpwn) — RESOLVED → `flag{xor_is_the_new_aes}` via new
+  `sample-keystream-xor` solver. The source embeds a sample plaintext + its
+  hex ciphertext + the flag's hex ciphertext under one repeating key;
+  autocrypt now recovers the key from the sample and decrypts the flag.
 * mindreader (CSAW Red 2020) — out of scope (interactive). AES-OFB with a
   constant key+IV across calls ⇒ keystream reuse; chosen-plaintext recovers the
   keystream and XORs with the flag ciphertext. Requires a live network client,
