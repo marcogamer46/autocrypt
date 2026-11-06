@@ -5,3 +5,12 @@ tm.py
 *_merged.txt
 *.log
 /tmp/
+
+# Scratch / generated outputs
+*.bin
+*.zip
+
+# Raw downloaded CTF training data stays local (not versioned). Some bundles
+# contain leaked-flag files (Easy_Peasy, unary_binary, ...) that must NOT be
+# committed; tracked challenge files under online_train/ remain tracked.
+/real_challenges/online_train/

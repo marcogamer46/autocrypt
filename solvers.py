@@ -601,12 +601,24 @@ def solve_base36_caesar(data, ctx):
             else:
                 out.append(ch)
         variants.append(("".join(out), "base36-caesar", {"shift": k}))
-    ranked = sorted(((_rank_score(o), o, m, p) for o, m, p in variants),
-                    reverse=True, key=lambda x: x[0])
-    for i, (score, out, method, params) in enumerate(ranked[:3]):
+    def _has_known_flag(o):
+        lo = o.lower()
+        return any(p in lo for p in ("flag{", "ctf{", "picoctf{", "academy{",
+                                     "htb{", "ictf{", "dice{", "thm{"))
+    entries = []
+    for o, m, p in variants:
+        sc = _rank_score(o)
+        fb = _has_known_flag(o)
+        # A decode that yields a known-prefix flag inside plausible English is
+        # an authoritative recovery; give it enough confidence to outrank an
+        # as-is "flag-shaped" row (which sits at the ~0.96 floor).
+        claim = max(sc, 0.97) if fb and sc >= 0.5 else sc
+        entries.append((1.0 if fb else 0.0, sc, claim, o, m, p))
+    ranked = sorted(entries, key=lambda x: (x[0], x[1]), reverse=True)
+    for i, (_fb, sc, claim, out, method, params) in enumerate(ranked[:3]):
         if i == 0:
             params["_relative_candidate"] = True
-        yield out, method, params, score
+        yield out, method, params, claim
 
 
 _FLAG_BODY_SHELL_RE = re.compile(r"^([A-Za-z]+)\{([^{}\s]{1,300})\}$")
