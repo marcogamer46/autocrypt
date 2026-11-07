@@ -148,13 +148,17 @@ def results_panel(results, width=None, preview_boxes=3):
         if len(plain) > len(shown):
             chunks.append("[preview truncated; save results for full plaintext]")
         plaintext_boxes.append(box(f"Plaintext #{rank}", chunks, width, "cyan"))
-    sections = [box("Ranked results", lines, width, "cyan")]
+    sections = [box(f"Ranked results ({len(results)})", lines, width, "cyan")]
     # By default only preview the top few full plaintexts; the summaries above
     # always list every rank, and "save" writes all of them regardless.
     sections.extend(plaintext_boxes[:max(1, preview_boxes)])
     if len(plaintext_boxes) > max(1, preview_boxes):
-        sections.append(paint(f"(… {len(plaintext_boxes) - max(1, preview_boxes)} more plaintexts; "
+        sections.append(paint(f"(... {len(plaintext_boxes) - max(1, preview_boxes)} more plaintexts; "
                               "use save to write them all)", "dim"))
+    # A higher timeout budget can surface additional lower-ranked candidates
+    # (best-first search runs more solvers) — never changes the top result.
+    sections.append(paint("Raising the timeout may reveal more lower-ranked candidates "
+                          "(never changes the top).", "dim"))
     return "\n".join(sections)
 
 def _valid_regex(pattern):
