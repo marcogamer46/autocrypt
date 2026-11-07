@@ -23,6 +23,15 @@ def _color_on(): return bool(getattr(sys.stdout, "isatty", lambda: False)()) and
 def paint(text, color):
     return f"{_ANSI[color]}{text}{_ANSI['reset']}" if _color_on() else str(text)
 
+def _safe(text):
+    """Coerce text to something the console can encode; never raise on a
+    legacy (e.g. cp1252) terminal even in non-color mode."""
+    try:
+        return str(text).encode(sys.stdout.encoding or "utf-8", "replace").decode(
+            sys.stdout.encoding or "utf-8")
+    except (LookupError, UnicodeEncodeError):
+        return str(text)
+
 def _unicode():
     try: "┌─│└─┘─┐░█".encode(getattr(sys.stdout, "encoding", None) or "utf-8"); return True
     except (LookupError, UnicodeEncodeError): return False
@@ -110,11 +119,15 @@ def verdict_banner(results):
         return ""
     top = results[0]
     conf = top.get("confidence", 0.0)
+    plain = str(top.get("plaintext", "")).strip()
     if top.get("is_flag") and conf >= 0.80:
-        return paint(f"✔ Flag-like result at rank 1 (confidence {conf:.2f})", "green")
+        msg = "Flag-like result at rank 1 (confidence {:.2f})".format(conf)
+        if plain and len(plain) <= 200 and "\n" not in plain:
+            return _safe(paint(msg + "\n" + plain, "green"))
+        return _safe(paint(msg, "green"))
     if conf >= 0.80:
-        return paint(f"Best guess at rank 1 (confidence {conf:.2f})", "yellow")
-    return paint("Low-confidence candidates only — treat with caution.", "yellow")
+        return _safe(paint("Best guess at rank 1 (confidence {:.2f})".format(conf), "yellow"))
+    return _safe(paint("Low-confidence candidates only - treat with caution.", "yellow"))
 
 def results_panel(results, width=None, preview_boxes=3):
     width = max(1, width or _width())
