@@ -67,6 +67,10 @@ work is code-quality (pool scheduling, tests, budget edges, CLI flags).
 ## Done
 - BKLG-01 [2026-11-08] Pooled-executor scheduling fixed: hoisted --fast
   heavy-solver skip before pool submission; .result() now wait-bounded by
-  the remaining global budget (scoutError = budget cutoff, not a blocker).
+  the remaining global budget (TimeoutError = budget cutoff, not a blocker).
   Verified: test_e7 4/4, test_matrix, test_flagshape pass; jobs=1 vs jobs=4
   determinism MATCH on a pool-triggering input.
+- BKLG-02 [2026-11-08] Added test_ui_safety.py: verdict_banner self-safe
+  with non-cp1252 flags; results_panel preview/truncation/notes; all panels
+  render under reconfigured cp1252 stdout; timeout-invariance top-1 stable
+  t=10 vs 20. 4/4 pass.
