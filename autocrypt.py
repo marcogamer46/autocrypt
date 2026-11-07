@@ -98,16 +98,16 @@ def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=5,
             _exact_res = SearchResult(_recs, "FOUND", ctx.failures)
     if _exact_res is not None:
         res = _exact_res
-        if pool is not None:
-            pool.shutdown(wait=False, cancel_futures=True)
+        if ctx.pool is not None:
+            ctx.pool.shutdown(wait=False, cancel_futures=True)
         # skip the full best-first search entirely
         res = _exact_res
     else:
         try:
             res = search(data, ctx, top=top, max_depth=max_depth)
         finally:
-            if pool is not None:
-                pool.shutdown(wait=False, cancel_futures=True)
+            if ctx.pool is not None:
+                ctx.pool.shutdown(wait=False, cancel_futures=True)
     if verbose:
         for name, dt in sorted(ctx.solver_times.items(), key=lambda kv: -kv[1])[:12]:
             print(f"[verbose] solver time {name}: {dt:.2f}s")

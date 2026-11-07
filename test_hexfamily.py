@@ -113,7 +113,7 @@ class Gen:
 
 def run_case(data_bytes, timeout=15):
     Path("tm.txt").write_bytes(data_bytes)
-    r = subprocess.run(["python3", "autocrypt.py", "tm.txt",
+    r = subprocess.run([sys.executable, "autocrypt.py", "tm.txt",
                         "--timeout", str(timeout), "--json"],
                        capture_output=True, text=True, timeout=40)
     try:
@@ -143,7 +143,7 @@ D34 = [  # depth 3-4 measurement grid
 
 
 def main():
-    seed = int(sys.argv[1])
+    seed = int(sys.argv[1]) if len(sys.argv) > 1 else 20270704
     g = Gen(seed)
     if "--matrix" in sys.argv:
         cases = g.build(10, cipher=[c for c, _ in MATRIX],

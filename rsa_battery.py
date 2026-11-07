@@ -5,7 +5,7 @@ The generated files contain only the raw number-theoretic parameters (n/e/c
 and, for hint-style challenges, p/q) — never the plaintext flag. autocrypt must
 recover each flag. Expected flags are recorded here purely for verification.
 """
-import os, random, math, subprocess, tempfile, shutil
+import os, random, math, subprocess, sys, tempfile, shutil
 
 random.seed(20261106)
 
@@ -179,7 +179,7 @@ def main():
         results = []
         for name, path, expected in cases:
             r = subprocess.run(
-                ["python3", "autocrypt.py", path, "--timeout", "25",
+                [sys.executable, "autocrypt.py", path, "--timeout", "25",
                  "--json", "--top", "6"],
                 capture_output=True, text=True, timeout=60)
             import json

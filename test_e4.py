@@ -76,7 +76,7 @@ def run_case_multi(data, src, timeout=20):
     """Run autocrypt on a multi-file pair (source + output) via tmp files."""
     Path("tm_e4.py").write_bytes(src)
     Path("tm_e4.txt").write_bytes(data or b"")
-    r = subprocess.run(["python3", "autocrypt.py", "tm_e4.py", "tm_e4.txt",
+    r = subprocess.run([sys.executable, "autocrypt.py", "tm_e4.py", "tm_e4.txt",
                         "--timeout", str(timeout), "--json"],
                        capture_output=True, text=True, timeout=60)
     try:

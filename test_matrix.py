@@ -1,3 +1,4 @@
+import sys
 import base64, subprocess, sys, codecs, string, math
 P = "TTFCTFGGH{n0t_eng1ish_zq7x_k9}"
 def shift(t,k):
@@ -58,7 +59,7 @@ for n,c in cases.items():
     if only and n not in only: continue
     open("tm.txt","w").write(c)
     try:
-        r=subprocess.run(["python3","autocrypt.py","tm.txt","--timeout","15","--json"],capture_output=True,text=True,timeout=40)
+        r=subprocess.run([sys.executable, "autocrypt.py","tm.txt","--timeout","15","--json"],capture_output=True,text=True,timeout=40)
         import json
         out=json.loads(r.stdout or "[]")
         if isinstance(out, dict): out=out.get("results", [])

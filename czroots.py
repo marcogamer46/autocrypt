@@ -180,8 +180,12 @@ def find_roots(coeffs, bound):
         return []
     if bound <= 1:
         return [0] if coeffs[0] == 0 else []
-    # pick prime P > bound
+    # pick prime P > bound that does not divide the leading coefficient
+    # (leading coeff must be invertible in F_P for _roots_mod_prime)
+    L = coeffs[d]
     P = next_prime(bound)
+    while L % P == 0:
+        P = next_prime(P + 1)
     roots_mod = _roots_mod_prime(coeffs[:d+1], P)
     out = []
     for r in roots_mod:

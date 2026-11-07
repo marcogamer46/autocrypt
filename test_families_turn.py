@@ -140,7 +140,7 @@ class Gen:
 
 def run_case(data):
     Path("tm.txt").write_bytes(data)
-    r = subprocess.run(["python3", "autocrypt.py", "tm.txt",
+    r = subprocess.run([sys.executable, "autocrypt.py", "tm.txt",
                         "--timeout", "15", "--json"],
                        capture_output=True, text=True, timeout=40)
     if "AUTO_DEBUG_FAM" in __import__("os").environ:

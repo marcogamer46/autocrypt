@@ -10,6 +10,7 @@ solver recover the key by backtracking, without any known plaintext.
 This test synthesizes a raw bundle with that scheme (no real flag is leaked)
 and requires autocrypt's own pipeline to recover the flag.
 """
+import sys
 import subprocess
 import tempfile
 from pathlib import Path
@@ -71,7 +72,7 @@ def pipeline_engages():
         fh.write(formatted + "\n")
         path = fh.name
     try:
-        args = ["python3", "autocrypt.py", path, "--timeout", "120",
+        args = [sys.executable, "autocrypt.py", path, "--timeout", "120",
                 "--json", "--top", "8"]
         r = subprocess.run(args, capture_output=True, text=True, timeout=180)
         if not r.stdout:

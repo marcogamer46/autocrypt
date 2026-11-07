@@ -6,7 +6,9 @@ import collections
 import hashlib
 import heapq
 import math
+import os
 import re
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Iterable
@@ -757,8 +759,23 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                                       "Exact attack/crib recovered the plaintext.") if letters < 20 else (
                                           "Recovered by an exact attack or supplied crib.")
                         else:
-                            score = min(score, 0.55)
-                            reason = "Recovered candidate is not recognizable text; not confirmed."
+                            # A verified deterministic attack (RSA, crib, cracked,
+                            # DH, JWT-HS256) that yields printable, full-buffer,
+                            # non-echo plaintext is the real decryption even when
+                            # the format is not a {…} flag — flags are not
+                            # guaranteed to follow a fixed shape. Surface it as a
+                            # first-class result instead of hiding it.
+                            _rp = (sum(c.isprintable() or c in "\r\n\t" for c in text)
+                                   / max(1, len(text)))
+                            _echo_row = bool(
+                                text.strip() == data.decode("utf-8", "replace").strip())
+                            if _rp >= 0.9 and not _echo_row and len(text) >= 3:
+                                score = max(score, 0.98)
+                                reason = ("Recovered by a verified exact attack "
+                                          "(decrypted plaintext; non-flag format).")
+                            else:
+                                score = min(score, 0.55)
+                                reason = "Recovered candidate is not recognizable text; not confirmed."
                     # An "exact" attack whose output is not readable plaintext
                     # (e.g. a false-positive Franklin-Reiter on accidental small
                     # labels, printing control bytes) is not evidence: demote it
@@ -863,7 +880,7 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                     # (leet-aware) and covers essentially the whole buffer.
                     ev_cover = 0.0
                     ev_dgain = 0.0
-                    if flag_shaped:
+                    if flag_shaped or (recovered and not statistical):
                         nonws_len_ev = max(1, len(re.sub(r"\s", "", text)))
                         ev_cover = len(match_text) / nonws_len_ev
                         ev_dgain = (leet_body_dict_fraction(text) -
@@ -1027,25 +1044,50 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                     # transposition recoveries may).
                     if not (is_flag or recovered or strong_recovery) and record["confidence"] >= .98:
                         record["confidence"] = .97
-                    # A regex match is authoritative, independent of score or
-                    # prefix. Preserve the requested immediate flag exit -- but
-                    # only for genuine flags. A low-confidence recovered row
-                    # that merely LOOKS flag-shaped (e.g. a wrong-key XOR
-                    # output) must not abort the search and discard the real
-                    # recovery.
-                    if is_flag and top > 0 and record["confidence"] >= 0.95:
-                        return SearchResult([record], "FOUND", ctx.failures)
                     # Verified exact recovery bookkeeping + grace-gated early exit.
+                    # An "exact" recovery is a confirmed decrypt; a flag-shaped row
+                    # that merely LOOKS like a flag (e.g. a wrong-key XOR output) is
+                    # NOT verified.
                     _full_shape = (is_flagish(text) or _flagout_ok) and ev_cover >= 0.9
+                    # A statistical brute-force recovery is a best guess: a wrong
+                    # key can also produce flag-shaped garbage. So shape alone must
+                    # never confirm it. The one form of real evidence a statistical
+                    # recovery can have is BODY quality: the recovered flag body is
+                    # made of genuine (leet-aware) dictionary words. Gibberish
+                    # wrong-key output ("jrWTd3CpiriT{ETBf...}") has ~0 dictionary
+                    # content; a genuine decrypt ("...{fl4g_m4ny_k3ys}") is near 1.
+                    _body_good = leet_body_dict_fraction(text) >= 0.4
                     _exact_like_decode = bool(
                         flag_shaped and _flagout_ok and ev_cover >= 0.9
                         and record["confidence"] >= 0.95
+                        and not statistical
                         and base_method in ("single-byte xor", "repeating-key xor",
                                             "xor-short"))
                     _verified_exact = bool(
                         exact_direct or strong_recovery or _exact_like_decode or
-                        (recovered and (_full_shape or clear_english(text) or _tech)) or
-                        (is_flag and (match_text.lower().startswith(_KNOWN_PREFIXES) or _full_shape)))
+                        # Deterministic attacks (RSA/DH/JWT/known-plaintext) are
+                        # verified even when the output is not textbook-readable,
+                        # so full flag-shape or English confirms them. But a
+                        # STATISTICAL recovery (cracked XOR/substitution/hillclimb)
+                        # is only a best guess: a wrong key can also produce
+                        # flag-shaped garbage, so shape alone must not confirm it.
+                        # Require the stronger evidence (clear English, a good
+                        # leet body, or a short technical verdict) for statistical
+                        # recoveries.
+                        (recovered and ((not statistical and _full_shape)
+                                        or clear_english(text)
+                                        or (_tech and not statistical)
+                                        or (statistical and is_flag and _body_good))) or
+                        (is_flag and (match_text.lower().startswith(_KNOWN_PREFIXES)
+                                      or (not statistical and _full_shape))))
+                    # A regex match is authoritative, independent of score or
+                    # prefix. Preserve the requested immediate flag exit -- but
+                    # only for GENUINE flags. A low-confidence recovered row
+                    # that merely LOOKS flag-shaped (e.g. a wrong-key XOR
+                    # output) must not abort the search and discard the real
+                    # recovery.
+                    if is_flag and top > 0 and record["confidence"] >= 0.95 and _verified_exact:
+                        return SearchResult([record], "FOUND", ctx.failures)
                     if _verified_exact and not ctx.exact_found:
                         ctx.exact_found = True
                         ctx.exact_time = time.monotonic()

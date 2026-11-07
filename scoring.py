@@ -116,7 +116,7 @@ writeup cve reverse engineering fuzz vulnerability security
 
 
 def _letters(text: str) -> str:
-    return "".join(c.lower() for c in text if "a" <= c.lower() <= "z")
+    return re.sub(r"[^a-z]", "", text.lower())
 
 
 def _build_table() -> dict[str, int]:
@@ -180,12 +180,15 @@ def word_final_log(letter: str) -> float:
     return math.log10(_LETTER_FREQ.get(letter.lower(), 1e-6))
 
 
-def quadgram_score(text: str) -> float:
-    letters = _letters(text)
+def _quadgram_from_letters(letters: str) -> float:
     if len(letters) < 4:
         return -7.2
     return sum(_Q_LOG.get(letters[i:i + 4], _Q_FLOOR)
                for i in range(len(letters) - 3)) / (len(letters) - 3)
+
+
+def quadgram_score(text: str) -> float:
+    return _quadgram_from_letters(_letters(text))
 
 
 def english_confidence(text: bytes | str) -> float:
@@ -195,7 +198,7 @@ def english_confidence(text: bytes | str) -> float:
     letters = _letters(text)
     if len(letters) < 6:
         return 0.0
-    q = quadgram_score(text)
+    q = _quadgram_from_letters(letters)
     qscore = 1.0 / (1.0 + math.exp(max(-40.0, min(40.0, -18.0 * (q + 5.48)))))
     words = [w.lower() for w in re.findall(r"[A-Za-z]+", text)]
     dict_hit = 0.0
@@ -428,7 +431,8 @@ def plain_text_score(buf: bytes, flag_bonus: bool = False) -> float:
             return -math.inf
         total += v
     text = buf.decode("ascii")
-    letters = _letters(text.translate(_LEET))
-    q = quadgram_score(text.translate(_LEET)) if len(letters) >= 4 else -6.0
+    t = text.translate(_LEET)
+    letters = _letters(t)
+    q = _quadgram_from_letters(letters) if len(letters) >= 4 else -6.0
     bonus = .6 if flag_bonus and _FLAGISH.search(text) else 0.0
     return total / len(buf) + .5 * (q + 5.5) + bonus

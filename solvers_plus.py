@@ -11,7 +11,10 @@ import string
 from core import solver
 from scoring import assess, WORDS
 import solvers as S
-from solvers_more import _vals, _pick, _txt, _is_prime, factor_all
+import solvers_more as SM  # module namespace (late-bound) breaks an import cycle:
+# test_* may import solvers_more first -> solvers -> solvers_plus -> solvers_more
+# (still partial). Referencing SM.<name> at call time avoids needing the names
+# to exist while the module is only partially initialized.
 
 
 def _ints(t, lo=None, hi=None):
@@ -31,7 +34,7 @@ def _plain(m):
 @solver("RSA-shared-prime", lambda fp: .999 if fp["charset"] == "ascii-text" and len(
     re.findall(r"\bn\d+\s*=", fp.get("_text", ""))) >= 2 else 0.0)
 def solve_shared_prime(data, ctx):
-    v = _vals(data, ctx)
+    v = SM._vals(data, ctx)
     ns = {k[1:]: x for k, x in v.items() if re.fullmatch(r"n\d+", k)}
     e = v.get("e", 65537)
     for (i, a), (j, b) in itertools.combinations(sorted(ns.items()), 2):
@@ -51,9 +54,9 @@ def solve_shared_prime(data, ctx):
 @solver("RSA-dp-leak", lambda fp: .999 if fp["charset"] == "ascii-text" and re.search(
     r"\bd[pq]\s*=", fp.get("_text", ""), re.I) else 0.0)
 def solve_dp_leak(data, ctx):
-    v = _vals(data, ctx)
-    n, c, e = _pick(v, "n"), _pick(v, "c", "ct", "enc", "cyphertext", "ciphertext"), v.get("e", 65537)
-    leak = _pick(v, "dp", "dq")
+    v = SM._vals(data, ctx)
+    n, c, e = SM._pick(v, "n"), SM._pick(v, "c", "ct", "enc", "cyphertext", "ciphertext"), v.get("e", 65537)
+    leak = SM._pick(v, "dp", "dq")
     if not (n and c and leak):
         return
     for base in (2, 3, 5, 7):
@@ -84,7 +87,7 @@ def _bsgs(g, h, p, order):
 
 def dlog(g, h, p, ctx):
     """x with g^x = h mod p; Pohlig-Hellman over the factors of p-1 (needs smooth-ish p-1)."""
-    fa = factor_all(p - 1, ctx)
+    fa = SM.factor_all(p - 1, ctx)
     if not fa:
         return None
     res, mods = [], []
@@ -112,9 +115,9 @@ def dlog(g, h, p, ctx):
     r"\bg\s*=", fp.get("_text", "")) and re.search(r"\bp\s*=", fp.get("_text", "")) else 0.0)
 def solve_dlog(data, ctx):
     """g^x = h (mod p) with smooth p-1 (or small p). Also derives the DH shared secret."""
-    v = _vals(data, ctx)
+    v = SM._vals(data, ctx)
     g, p = v.get("g"), v.get("p")
-    if not (g and p) or p < 5 or not _is_prime(p):
+    if not (g and p) or p < 5 or not SM._is_prime(p):
         return
     pubs = {k: x for k, x in v.items() if k in ("a", "b", "h", "y", "pub", "public", "x") and 1 < x < p}
     pubs.update({k: x for k, x in v.items() if k in ("a_pub", "b_pub", "pk", "alice", "bob") and 1 < x < p})
@@ -135,7 +138,7 @@ def solve_dlog(data, ctx):
 @solver("lcg-recovery", lambda fp: .8 if fp["charset"] == "ascii-text" and (_ints(fp.get("_text", ""), 0, 1 << 128) or [])
         and 6 <= len(fp.get("_text", "").split()) < 600 else 0.0)
 def solve_lcg(data, ctx):
-    s = _ints(_txt(data), 0, 1 << 128)
+    s = _ints(SM._txt(data), 0, 1 << 128)
     if not s or len(s) < 6 or len(s) >= 624:
         return
     d = [s[i + 1] - s[i] for i in range(len(s) - 1)]
@@ -169,7 +172,7 @@ def solve_lcg(data, ctx):
 @solver("mt19937-predict", lambda fp: .8 if fp["charset"] == "ascii-text" and len(
     fp.get("_text", "").split()) >= 624 and _ints(fp.get("_text", ""), 0, 1 << 32) else 0.0)
 def solve_mt(data, ctx):
-    o = _ints(_txt(data), 0, 1 << 32)
+    o = _ints(SM._txt(data), 0, 1 << 32)
     if not o or len(o) < 624:
         return
 
@@ -214,7 +217,7 @@ def solve_hash(data, ctx):
 @solver("ecb-detect", lambda fp: .3 if fp["length"] >= 32 else 0.0)
 def solve_ecb(data, ctx):
     raw = data
-    t = _txt(data).strip()
+    t = SM._txt(data).strip()
     if re.fullmatch(r"(?:[0-9a-fA-F]{2})+", t):
         raw = bytes.fromhex(t)
     if len(raw) % 16 == 0 and len(raw) >= 32:

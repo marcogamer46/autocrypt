@@ -22,7 +22,7 @@ def run_autocrypt(data: bytes, expect: str, timeout=25):
     f.write_bytes(data)
     t0 = time.monotonic()
     out = subprocess.run(
-        ["python3", "autocrypt.py", str(f), "--timeout", "15"],
+        [sys.executable, "autocrypt.py", str(f), "--timeout", "15"],
         capture_output=True, text=True, timeout=timeout)
     secs = time.monotonic() - t0
     return expect in out.stdout, secs

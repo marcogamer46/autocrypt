@@ -226,3 +226,66 @@
   theoretical N^0.292 bound ⇒ generator/parameter issue, documented).
 - Regression maintained **43/43 PASS** (run_tests.sh). README battery baseline
   updated to 10/11; gaps tracker updated.
+
+## Session 23 (2026-11-07) — partial-p generalization to unbalanced primes
+- Generalized `_recover_p_partial` (solvers.py) so partial-p recovery also works
+  when p is NOT ~sqrt(n) (unbalanced prime factor). The lattice itself already
+  handled it; the gap was the hypothesis sweep: the β-grid (p ~ n^beta)
+  didn't cover the true low-bit count m, and each wrong m ran an expensive
+  escalated lattice.
+- Sweep rework: interleaved upper/lower imbalance hypotheses (balanced first),
+  cheap `mm=2` single-dimension tries (verifiably ~2.5x faster than mm=3, and
+  sufficient for both balanced and unbalanced recoveries), a hard cap
+  [_P_MAX_TRIES=30] on lattice attempts, plus an escalated mm=3 fallback on the
+  nearest candidates for borderline balanced bounds.
+- Fixed `rsa_battery.py` to invoke autocrypt via `sys.executable` (was the
+  hard-coded `python3`, which is a stub on this machine → JSON parse failure).
+- Verified: unbalanced 852-bit n / 512-bit p (m=160) recovers in ~13s;
+  battery stays 10/11 with partial_p PASS; balanced partial_p still <1s.
+
+## Session 24 (2026-11-07) — hardening + portability (battery 10/11)
+- **Bugfix: czroots crash on a root-finder prime dividing the leading coeff.**
+  `find_roots` now chooses prime `P > bound` **coprime to the leading
+  coefficient** (skips `P` where `L % P == 0`), so `pow(L, -1, P)` never
+  raises ValueError.
+- **Bugfix: escalated-fallback no-op.** After the cheap sweep marks every m
+  tried, the escalated fallback's filter `[m for m in order[:5] if m not in
+  tried]` was empty → large-leak balanced cases silently skipped the fallback.
+  Fixed by clearing the `tried` set before the fallback pass.
+- **Deadline-abortable LLL.** `lll(basis, check=...)` now takes a `check`
+  callback; when it turns falsy (deadline expired) the reduction aborts and
+  returns `None`, so a high-dimension lattice can't hang for minutes past the
+  per-case budget. Threaded through `_coppersmith_try`.
+- **Sweep ordering hardened.** Restored the proven cheap-first hypothesis sweep
+  (balanced first, interleaved upper/lower imbalance) with a small escalated
+  fallback *only* on the closest candidates — avoiding burning the whole
+  budget on escalation of a wrong m. Unbalanced cases now recover in ~8-17s.
+- **New regression `test_partial_p.py`** — 13 cases (balanced + unbalanced
+  keys, several m/leak sizes) exercising `_recover_p_partial` directly.
+  All 13 pass (unbalanced 1024/614 m=192 in ~17s; balanced 1024/512 m=192 in
+  ~36s).
+- **Subprocess portability.** Replaced hard-coded `"python3"` with
+  `sys.executable` across the test scripts and battery (python3 is a stub on
+  this machine → empty stdout → JSON parse failure); fixed a mis-injected
+  `import sys` left inside a docstring by an earlier patch script.
+- Verified: battery **10/11** (partial_p PASS), test_partial_p **13/13**,
+  E3 **15/15**.
+
+## Session 25 (2026-11-07) — RSA e=1/Rabin, non-flag plaintext scoring
+
+- **Non-flag plaintext scoring.** A verified exact RSA/crypto attack that decrypts
+  to printable, non-flag-shaped plaintext (real encryption, not a `flag{...}`
+  shell) now scores 0.98 and ranks at 0 instead of being demoted below the display
+  floor. Ambiguous / non-printable recoveries remain capped at 0.55. This makes
+  the solver recover genuine decrypted plaintext regardless of flag format.
+- **RSA e=1 (identity).** `e==1 && c<n` ⇒ plaintext is `c`; decoded and reported
+  decisively.
+- **RSA Rabin (e=2).** After factoring, decrypt via Tonelli–Shanks square roots
+  mod p/q + CRT; all four roots are emitted.
+- **Tonelli–Shanks fix.** The sqrt update multiplied `t` by the stale pre-update
+  `c` instead of `c_new = b²` (a tuple-unpacking bug), so some quadratic residues
+  returned None. Fixed; brute-force QR sweep now 0/16516 bad.
+- **New regression `test_rsa_extra.py`** — end-to-end e=1 and Rabin cases through
+  `solve_rsa`; both pass in ~2s.
+- Verified: battery **10/11** (partial_p PASS), test_partial_p **13/13**,
+  E3 **15/15**.

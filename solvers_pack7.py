@@ -13,9 +13,9 @@ import re
 import struct
 
 from core import solver
-from scoring import assess, flag_plausibility, quadgram_score, english_confidence
+from scoring import assess, flag_plausibility, quadgram_score, english_confidence, leet_body_dict_fraction
 import solvers as S
-from solvers_more import _is_prime, factor_all
+import solvers_more as SM  # late-bound: breaks the solvers<->solvers_more import cycle
 
 _EN_FREQ26 = [.08167, .01492, .02782, .04253, .12702, .02228, .02015, .06094,
               .06966, .00153, .00772, .04025, .02406, .06749, .07507, .01929,
@@ -273,7 +273,7 @@ def solve_dpdq(data, ctx):
     c = v.get("c")
     if not (p and q and dp is not None and dq is not None and c is not None):
         return
-    if not (_is_prime(p) and _is_prime(q)):
+    if not (SM._is_prime(p) and SM._is_prime(q)):
         return
     m1 = pow(c, dp, p)
     m2 = pow(c, dq, q)
@@ -799,7 +799,16 @@ def _xor_score(out):
     if pr < .95 or an < .65:
         return -3.0 + pr + an
     txt = out.decode("latin-1")
-    return 0.3 * english_confidence(txt) + 0.7 * flag_plausibility(txt)
+    base = 0.3 * english_confidence(txt) + 0.7 * flag_plausibility(txt)
+    # A genuine flag body (leet words like h4ck -> hack) is decisive evidence
+    # the recovery is real, and outscores shape-only fakes (e.g. a string
+    # that happens to contain one English word inside braces). When the leet
+    # body is real, make it dominate so genuine flags win over junk that
+    # merely scores high on English confidence.
+    ldf = leet_body_dict_fraction(txt)
+    if ldf > 0:
+        return 0.85 * ldf + 0.15 * base
+    return base
 
 
 def _xor_short_prior(fp):
@@ -810,6 +819,14 @@ def _xor_short_prior(fp):
         return .5
     if fp["charset"] in ("binary", "mixed"):
         return .5
+    # Single-byte-XOR ciphertext whose decrypted plaintext is small-ish often
+    # decodes to *mostly-printable ASCII* (every ^ key is small), so the
+    # buffer is classified ascii-text rather than binary/mixed — and the
+    # solver would never run. If the text is printable but has very low
+    # English confidence (i.e. it is gibberish, not prose), it is plausibly
+    # XOR ciphertext; the yield gate (score >= .55) still filters noise.
+    if fp["charset"] == "ascii-text" and english_confidence(t) < 0.2:
+        return .35
     return 0.0
 
 
@@ -848,14 +865,28 @@ def solve_xor_short(data, ctx):
         if L > len(raw):
             break
         key = bytearray(L)
-        for j in range(L):
-            col = raw[j::L]
-            best_v, best_s = 0, -1.0
+        if L == 1:
+            # Single-byte key: pick by full-output plausibility, not by greedy
+            # per-column letter-likeness. A flag body with leet digits (e.g.
+            # h4ck_m1sc_pwn) has fewer pure-letter bytes, so the letter-biased
+            # heuristic can pick a wrong key that merely maximizes alphabetic
+            # bytes. Scanning all keys on the complete output is exact.
+            best_v, best_s = 0, -9.0
             for v in range(256):
-                s = sum(_byte_like(b ^ v) for b in col)
-                if s > best_s:
-                    best_v, best_s = v, s
-            key[j] = best_v
+                o = bytes(b ^ v for b in raw)
+                sc = _xor_score(o)
+                if sc > best_s:
+                    best_v, best_s = v, sc
+            key[0] = best_v
+        else:
+            for j in range(L):
+                col = raw[j::L]
+                best_v, best_s = 0, -1.0
+                for v in range(256):
+                    s = sum(_byte_like(b ^ v) for b in col)
+                    if s > best_s:
+                        best_v, best_s = v, s
+                key[j] = best_v
         out = bytes(b ^ key[i % L] for i, b in enumerate(raw))
         sc = _xor_score(out)
         if best is None or sc > best[0]:
@@ -1038,7 +1069,7 @@ def solve_hash_crack(data, ctx):
                                 yield out, f"Cracked hash-xor ({name})", {
                                     "salt": salt,
                                     "password": found.decode(errors="replace"),
-                                    "_statistical": True}, .98
+                                    "_statistical": False}, .98
                         except ValueError:
                             continue
                         break

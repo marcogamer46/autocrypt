@@ -6,6 +6,7 @@ Cipher: rotate over alphabet "0123456789abcdefghijklmnopqrstuvwxyz" by +17
 (e.g. `y4tz{` -> `flag{`). The solver must recover the plaintext, including
 the flag, from raw ciphertext.
 """
+import sys
 import re
 import subprocess
 from pathlib import Path
@@ -38,7 +39,7 @@ def solver_direct():
 
 def pipeline_engages():
     """The full pipeline should at least engage the base36-caesar chain."""
-    args = ["python3", "autocrypt.py", str(CHALLENGE), "--timeout", "30",
+    args = [sys.executable, "autocrypt.py", str(CHALLENGE), "--timeout", "30",
             "--json", "--top", "8"]
     r = subprocess.run(args, capture_output=True, text=True, timeout=120)
     if not r.stdout:

@@ -1,6 +1,6 @@
 things autocrypt can't solve (yet) — live tracker
 ==================================================
-Updated: 2026-11-05 (after E3 15/15 + regression sweep)
+Updated: 2026-11-07 (Session 25: RSA e=1/Rabin + Tonelli fix, non-flag plaintext scoring, test_rsa_extra.py; battery 10/11)
 
 This file tracks inputs/challenges the auto-solver does not yet solve to a
 rank-#0 flag recovery. When a case starts passing, move it to LOGS.md's
@@ -126,6 +126,8 @@ remaining unsolved class is a generator/parameter issue, not a pure solver gap.
 * partial_p — RESOLVED (2026-11-07) via a new LLL/Coppersmith solver
   (`lattice.py` + `czroots.py`). Recovers p from the top 352/512 bits in
   <1s on the 1024-bit battery case (method `RSA partial-p (Coppersmith)`).
+  Session 23 also generalized the sweep to unbalanced primes (p not ~√n,
+  down to p ~ n^0.33): verified on an 852-bit n / 512-bit p case (~13s).
 
 Only boneh_durfee remains open under the battery's current parameters.
 
@@ -134,3 +136,13 @@ Process note
 - Re-run `python3 test_e3.py` after each change and update this list.
 - Re-run `python3 rsa_battery.py` after any RSA-solver change; keep 9/11+.
 - When the next unresolved case appears, add it here with a root-cause note.
+
+Session 24 (2026-11-07): three bugs fixed — czroots root-finder prime now
+chosen coprime to the leading coefficient (was `pow(L,-1,P)` ValueError);
+the escalated partial-p fallback no-op (tried set cleared before fallback);
+LLL gained a deadline abort so it cannot hang minutes past budget. Unbalanced
+partial-p sweep restored to cheap-first with a small escalated fallback
+(unbalanced cases recover in ~8-17s). New regression `test_partial_p.py`
+(13 balanced+unbalanced cases) passes 13/13. Battery stays 10/11 with
+partial_p PASS. Only boneh_durfee remains (generator/parameter issue, above
+the N^0.292 bound).

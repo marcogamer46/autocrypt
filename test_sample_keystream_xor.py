@@ -6,6 +6,7 @@ embeds a sample plaintext, its ciphertext (hex), and the flag ciphertext
 (hex) all under the same repeating key. autocrypt must recover the key from
 the sample and decrypt the flag — no hand-fed crib.
 """
+import sys
 import subprocess
 from pathlib import Path
 
@@ -15,7 +16,7 @@ EXPECTED_FLAG = "flag{xor_is_the_new_aes}"
 
 
 def pipeline():
-    args = ["python3", "autocrypt.py", str(CHALLENGE), "--timeout", "30",
+    args = [sys.executable, "autocrypt.py", str(CHALLENGE), "--timeout", "30",
             "--json", "--top", "5"]
     r = subprocess.run(args, capture_output=True, text=True, timeout=120)
     if not r.stdout:

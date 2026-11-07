@@ -21,7 +21,7 @@ FIXTURES = [
 ]
 
 def run(path, jobs, extra=()):
-    args = ["python3", "autocrypt.py", str(path), "--timeout", "35",
+    args = [sys.executable, "autocrypt.py", str(path), "--timeout", "35",
             "--json", "--top", "3", "--jobs", str(jobs)] + list(extra)
     r = subprocess.run(args, capture_output=True, text=True, timeout=70)
     try:

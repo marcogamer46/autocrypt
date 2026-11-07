@@ -107,6 +107,9 @@ def solve_hex(data, ctx):
     except (ValueError, UnicodeError):
         pass
     # Separator-tolerant form: whitespace / , : ; / 0x-prefixed hex tokens.
+    # NB: gate on TOTAL hex-nibble count (even and >= 16), NOT on the number of
+    # tokens — byte-payloads of odd length (e.g. a 13-byte flag) would otherwise
+    # never parse.
     toks = []
     for t in re.split(r"[\s,:;]+", txt):
         t = t.strip().lower()
@@ -114,13 +117,15 @@ def solve_hex(data, ctx):
             t = t[2:]
         if t and re.fullmatch(r"[0-9a-f]{1,2}", t):
             toks.append(t)
-    if len(toks) >= 8 and len(toks) % 2 == 0:
-        try:
-            out = bytes.fromhex("".join(toks))
-            if out:
-                yield from _emit(ctx, out, "hex")
-        except ValueError:
-            return
+    if len(toks) >= 8:
+        h = "".join(toks)
+        if len(h) % 2 == 0:
+            try:
+                out = bytes.fromhex(h)
+                if out:
+                    yield from _emit(ctx, out, "hex")
+            except ValueError:
+                return
 
 
 @solver("hex-in-text", lambda fp: .45 if fp["charset"] == "ascii-text" and re.search(
@@ -1154,6 +1159,17 @@ def _parallel_map(worker, args, ctx):
         except Exception as exc:
             ctx.failures.append(f"Parallel solver failed: {type(exc).__name__}: {exc}")
             return []
+    # For very small workloads the process-pool overhead (especially the
+    # Windows `spawn` start method, ~0.5-1s per process) far exceeds the
+    # work itself. Keep it serial so small buffers aren't slowed by pool
+    # spin-up; the pool is only worth it when each job is meaty.
+    if ctx.pool is None and sum(len(a) if isinstance(a, (bytes, str)) else 0
+                               for a in args) < 2048:
+        try:
+            return [worker(arg) for arg in args]
+        except Exception as exc:
+            ctx.failures.append(f"Parallel solver failed: {type(exc).__name__}: {exc}")
+            return []
     pool = None
     try:
         method = "fork" if "fork" in mp.get_all_start_methods() else "spawn"
@@ -1857,6 +1873,15 @@ def solve_xor_repeating(data, ctx):
                     ascent_rounds = 4 if L >= 4 else 3
                     restarts = (48 if (L >= 4 and n <= 40 and not _textual)
                                 else (16 if (L >= 4 and not _textual) else 2))
+                    # A key length whose columns hold < 5 bytes each is not a
+                    # trustworthy repeating-key hypothesis (the true short key
+                    # is found by the L=1..3 joint/seed paths). Capping the
+                    # random-restart budget here avoids burning the whole search
+                    # on an implausible length while keeping the greedy per-column
+                    # seed and one clean restart (deterministic RNG).
+                    if L and n // L < 5:
+                        restarts = min(restarts, 2)
+                        ascent_rounds = min(ascent_rounds, 2)
                 seeds = []
                 seeds.append([max(ks, key=lambda k, c=c: sum(plain_text_score_byte(x ^ k)
                                                             for x in data[c::L]))
@@ -2264,6 +2289,56 @@ def _inv(a, n):
         return None
 
 
+def _tonelli_shanks(a, p):
+    """Square root of a mod p (prime), or None if a is a non-residue."""
+    a %= p
+    if a == 0:
+        return 0
+    if p == 2:
+        return a
+    if pow(a, (p - 1) // 2, p) != 1:
+        return None
+    if p % 4 == 3:
+        return pow(a, (p + 1) // 4, p)
+    q, s = p - 1, 0
+    while q % 2 == 0:
+        q //= 2
+        s += 1
+    z = 2
+    while pow(z, (p - 1) // 2, p) != p - 1:
+        z += 1
+    m, c = s, pow(z, q, p)
+    t, r = pow(a, q, p), pow(a, (q + 1) // 2, p)
+    while t != 1:
+        i, t2i = 0, t
+        while t2i != 1:
+            t2i = t2i * t2i % p
+            i += 1
+            if i >= m:
+                return None
+        b = pow(c, 1 << (m - i - 1), p)
+        cn = b * b % p  # c_new; t must be updated with c_new, not the old c
+        m, c = i, cn
+        t = t * cn % p
+        r = r * b % p
+    return r
+
+
+def _rabin_sqrt(c, p, q, n):
+    """All four square roots of c modulo n=pq (Rabin), or []."""
+    rp = _tonelli_shanks(c, p)
+    rq = _tonelli_shanks(c, q)
+    if rp is None or rq is None:
+        return []
+    out = set()
+    for sp in (rp, (-rp) % p):
+        for sq in (rq, (-rq) % q):
+            m = _crt([sp, sq], [p, q])
+            if m is not None:
+                out.add(m % n)
+    return sorted(out)
+
+
 def _int_plain(n):
     if n < 0:
         return b""
@@ -2462,12 +2537,25 @@ def _wiener(n, e):
     return None
 
 
+# p-size hypotheses (exponent beta with p ~ n^beta) tried by
+# _recover_p_partial, balanced (0.5) first. The lower/upper coverage lets an
+# unbalanced prime factor (p not ~sqrt(n)) still be recovered: the unknown
+# low-bit count is m = floor(beta*log2 n) - bitlen(p_high).
+_P_BETA_HYPOTHESES = (0.50, 0.47, 0.53, 0.44, 0.56, 0.41, 0.59, 0.38,
+                       0.62, 0.35, 0.65, 0.60, 0.40, 0.67, 0.33)
+# per-beta offset neighbourhood around base = round(beta*nbits) - hp
+_P_BETA_OFFSETS = (0, 1, -1)
+_P_MAX_TRIES = 30
+_P_SWEEP_MM = 2  # dimension used for cheap sweep tries (fast; mm=3 if needed)
+
+
 def _recover_p_partial(n, p_high, ctx):
     """Recover a prime factor p of n when the high bits of p are known.
 
     p = (p_high << m) + x with 0 <= x < 2^m. Coppersmith's method (see
     lattice.py) recovers x; the unknown low-bit count m is inferred from the
-    assumption that p ~ sqrt(n), with a few neighbours tried for safety.
+    size of p (assumed p ~ n^beta), trying several beta hypotheses (balanced
+    first, then unbalanced), each with a few neighbouring m values.
     """
     if n <= 1 or not p_high or p_high >= n:
         return None
@@ -2475,27 +2563,68 @@ def _recover_p_partial(n, p_high, ctx):
         import lattice
     except Exception:
         return None
-    total = (n.bit_length() + 1) // 2
-    base_m = total - p_high.bit_length()
-    if base_m < 1:
-        base_m = 1
-    # Try the inferred m first (it is the true low-bit count for balanced
-    # RSA), then the neighbours ordered by distance. Testing a wrong m can
-    # cost a full lattice reduction, so the likely-must come first.
-    candidates = [base_m]
-    for d in range(1, 10):
-        if base_m + d < n.bit_length():
-            candidates.append(base_m + d)
-        if base_m - d >= 1:
-            candidates.append(base_m - d)
-    for m in candidates:
-        if m >= n.bit_length():
-            continue
-        if not ctx.expired():
-            p = lattice.coppersmith_partial_p(
-                n, p_high, m, check=lambda: not ctx.expired())
-            if p is not None and 1 < p < n and n % p == 0:
+    nbits = n.bit_length()
+    hp = p_high.bit_length()
+    tried = set()
+
+    def try_m(m, escalate=True, mm=_P_SWEEP_MM, max_escalate=None):
+        if m in tried:
+            return None
+        tried.add(m)
+        if m < 1 or m >= nbits:
+            return None
+        if ctx.expired():
+            return None
+        p = lattice.coppersmith_partial_p(
+            n, p_high, m, mm=mm, tt=1, check=lambda: not ctx.expired(),
+            escalate=escalate, max_escalate=max_escalate)
+        if p is not None and 1 < p < n and n % p == 0:
+            return p
+        return None
+
+    if nbits > 80:
+        # Interleave upper/lower imbalance hypotheses (|beta-0.5| asc), so a
+        # moderately unbalanced factor is reached early; balanced comes first.
+        by_imb = sorted(set(_P_BETA_HYPOTHESES), key=lambda b: abs(b - 0.5))
+        betas = [by_imb[0]]
+        upper = [b for b in by_imb[1:] if b > 0.5]
+        lower = [b for b in by_imb[1:] if b < 0.5]
+        for i in range(max(len(upper), len(lower))):
+            if i < len(upper):
+                betas.append(upper[i])
+            if i < len(lower):
+                betas.append(lower[i])
+
+        # Order all hypotheses (balanced first, interleaved upper/lower) and
+        # try them cheaply at mm=2; only then escalate the closest (balanced-
+        # first) candidates. Cheap-first keeps unbalanced inputs fast, and the
+        # small escalated fallback handles harder balanced leak sizes. The
+        # deadline check inside lll bounds the escalation cost.
+        order = []
+        for b in betas:
+            base = max(1, int(round(b * nbits)) - hp)
+            for off in _P_BETA_OFFSETS:
+                m = base + off
+                if m not in tried and len(order) < _P_MAX_TRIES:
+                    order.append(m)
+                    tried.add(m)
+        tried.clear()
+        for m in order:
+            p = try_m(m, escalate=False)
+            if p:
                 return p
+        if not ctx.expired():
+            tried.clear()
+            for m in order[:5]:
+                p = try_m(m, escalate=True)
+                if p:
+                    return p
+        return None
+    # small n: try the whole plausible range cheaply
+    for m in range(max(1, hp // 8), nbits):
+        p = try_m(m, escalate=False)
+        if p:
+            return p
     return None
 
 
@@ -2527,6 +2656,12 @@ def solve_rsa(data, ctx):
     if not ctx.rsa_params and n is not None and n < 256:
         return
     if n and e and c is not None and n > 1 and e > 0:
+        # e=1 is the identity encryption: c == m mod n, so the plaintext is c
+        # itself (when c < n). Decisive; report it and stop.
+        if e == 1 and c < n:
+            yield from _emit(ctx, _int_plain(c), "RSA e=1",
+                             {"n": n, "e": e, "c": c, "m": c})
+            return
         # Low exponent with reduction: when m^e >= n, c = m^e mod n, so m^e =
         # c + i*n for some small i. Scan i BEFORE any factoring (cheap and
         # decisive). e <= 5 keeps the scan bounded; e=3 is the classic picoCTF
@@ -2611,13 +2746,20 @@ def solve_rsa(data, ctx):
             factors = _factor(n, ctx)
             if factors:
                 p, q = factors
-                phi = (p - 1) * (q - 1)
-                d = _inv(e, phi)
-                if d is not None:
-                    m = pow(c, d, n)
-                    yield from _emit_rsa(
-                        ctx, m, "RSA factored",
-                        {"n": n, "e": e, "p": p, "q": q, "d": d, "m": m})
+                if e == 2:
+                    # Rabin: e=2 is not invertible mod phi, so decrypt by
+                    # taking square roots modulo p and q and combining.
+                    for mm in _rabin_sqrt(c, p, q, n):
+                        yield from _emit(ctx, _int_plain(mm), "RSA Rabin sqrt",
+                                         {"n": n, "e": e, "m": mm})
+                else:
+                    phi = (p - 1) * (q - 1)
+                    d = _inv(e, phi)
+                    if d is not None:
+                        m = pow(c, d, n)
+                        yield from _emit_rsa(
+                            ctx, m, "RSA factored",
+                            {"n": n, "e": e, "p": p, "q": q, "d": d, "m": m})
     # Small exponent WITHOUT a published modulus: some challenges publish only
     # `e` and `c` where c is an *unreduced* m^e (a perfect e-th power), e.g.
     # CSAW Teen RSA (e=3, no n printed). No modulus is needed for the exact
@@ -2926,7 +3068,7 @@ def _g2_hash_candidates(secret):
 
 @solver("linear-recurrence-hash-xor", lambda fp: .94 if fp["charset"] == "ascii-text" and (
     re.search(r"\bfunctools\.cache\b", fp.get("_text", "")) or
-    re.search(r"\bdef\s+\w+\((\w+)\):\s*(?s).*?return", fp.get("_text", ""))) and
+    re.search(r"(?s)\bdef\s+\w+\((\w+)\):\s*.*?return", fp.get("_text", ""))) and
     re.search(r"10\s*\*\*\s*10000|2e7|2\s*\*\s*10\s*\*\s*7|VERIF_KEY|ENCRYPTED_FLAG",
               fp.get("_text", "")) else 0.0)
 def solve_linear_recurrence(data, ctx):

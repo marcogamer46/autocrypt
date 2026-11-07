@@ -3,7 +3,7 @@ sys.path.insert(0, "/home/chillinmalware/Documents/autocrypt")
 
 def check(name, data, expect):
     open("tm.txt", "w").write(data)
-    r = subprocess.run(["python3", "autocrypt.py", "tm.txt",
+    r = subprocess.run([sys.executable, "autocrypt.py", "tm.txt",
                         "--timeout", "15", "--json", "--top", "5"],
                        capture_output=True, text=True, timeout=40)
     try:

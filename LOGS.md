@@ -298,3 +298,58 @@ regression re-run.
 | S22.3 | `coppersmith_partial_p` default `mm=3,tt=1`, dim-escalation ladder; real 1024-bit partial_p recovers in <1s (8/8 seeds). | lattice.py | real case rec=True (0.7s) |
 | S22.4 | `_recover_p_partial` tries inferred m first (was ascending from m-9 → ~19 wasted lattice runs → timeout). | solvers.py | solve_rsa on partial_p fixture: 0.69s → `academy{rsa_partial_p}` |
 | S22.5 | Full battery + regression. | — | battery **10/11** (partial_p PASS); run_tests **43/43 PASS** |
+
+## Session 23 (2026-11-07) — partial-p unbalanced generalization (battery 10/11)
+
+| Step | What changed | Files | Verified |
+|------|--------------|-------|----------|
+| S23.1 | `coppersmith_partial_p` gained `escalate=False` (single-dimension try) so a hypothesis sweep can run fast/cheap. | lattice.py | real unbalanced case recovers at mm=2 in 0.5s, mm=3 in 2.9s |
+| S23.2 | `_recover_p_partial` sweep: interleaved upper/lower β hypotheses, `mm=2` cheap tries, cap 30, escalated fallback on nearest candidates. Covers p up to ~n^0.67 / down to ~n^0.33. | solvers.py | unbalanced 852-bit n / 512-bit p recovers in 13.45s (was: miss → 65-101s + fail) |
+| S23.3 | `rsa_battery.py` uses `sys.executable` (not `python3`) for the autocrypt subprocess; imports `sys`. | rsa_battery.py | battery JSON parse fixed → 10/11 |
+| S23.4 | Full battery re-run. | — | battery **10/11** (partial_p PASS via `RSA partial-p (Coppersmith)`), balanced still <1s |
+
+## Session 24 (2026-11-07) — hardening + portability (battery 10/11)
+
+| Step | What changed | Files | Verified |
+|------|--------------|-------|----------|
+| S24.1 | `czroots.find_roots` picks prime P > bound coprime to the leading coeff (fixes `pow(L,-1,P)` ValueError when L % P == 0). | czroots.py | partial-p battery case recovers |
+| S24.2 | Escalated-fallback no-op fixed: `tried` cleared before the fallback pass so the high-dim lattice can re-attempt (was empty after the cheap sweep marked all m tried). | solvers.py | large-leak balanced cases pass |
+| S24.3 | `lll` gained a deadline `check` callback that aborts long reductions (returns None) instead of hanging minutes past budget. | lattice.py | budget-bound test cases abort cleanly |
+| S24.4 | Restored cheap-first sweep (balanced first, interleaved imbalance) with a small escalated fallback on the closest candidates; unbalanced inputs no longer burn the budget on wrong-m escalation. | solvers.py | unbalanced cases ~8-17s |
+| S24.5 | New `test_partial_p.py`: 13-case balanced+unbalanced regression exercising `_recover_p_partial` directly. | test_partial_p.py (new) | **13/13 PASS** |
+| S24.6 | Subprocess portability: `"python3"` → `sys.executable` in test scripts + battery; fixed a mis-injected `import sys` inside docstrings. | test_e3.py, test_b16_shift_vigenere.py, test_base36_caesar.py, test_sample_keystream_xor.py, rsa_battery.py | E3 **15/15**; battery JSON parses |
+| S24.7 | Full battery re-run. | — | battery **10/11** (partial_p PASS; boneh_durfee sole FAIL) |
+
+## Session 25 (2026-11-07) — RSA e=1/Rabin, non-flag plaintext scoring (battery 10/11)
+
+| Step | What changed | Files | Verified |
+|------|--------------|-------|----------|
+| S25.1 | `core.py` search scoring: a verified exact attack that decrypts to *printable* non-flag plaintext now scores 0.98 (`Recovered by a verified exact attack (decrypted plaintext; non-flag format)`), instead of being demoted below the display floor. Ambiguous / non-printable recoveries stay capped at 0.55. | core.py | real-encryption flags recovered at rank 0 even when not `flag{...}`-shaped |
+| S25.2 | `solvers.py` RSA e=1 identity branch: when e==1 and c<n, the plaintext is c itself (decisive). | solvers.py | e=1 fixture recovers m directly |
+| S25.3 | `solvers.py` Rabin (e=2) branch: after factoring, decrypt via `_rabin_sqrt` — Tonelli–Shanks sqrt modulo p/q + CRT — emitting all four roots. | solvers.py | 80-bit n functional test passes (m and n−m both present) |
+| S25.4 | Fixed Tonelli–Shanks update bug: `t` was multiplied by the *old* `c` (tuple unpacking used a stale value) instead of `c_new = b²`, so legitimate quadratic residues returned None. Now `cn = b*b; t = t*cn`. | solvers.py | brute-force QR sweep 0/16516 bad; Rabin roots all valid |
+| S25.5 | New regression `test_rsa_extra.py` exercises the e=1 and Rabin branches end-to-end through `solve_rsa`. | test_rsa_extra.py (new) | both PASS (~2s) |
+| S25.6 | Full battery + E3 + partial-p re-runs after the solver edits. | — | battery **10/11** (partial_p PASS; boneh_durfee sole FAIL); E3 15/15 at rank 0; test_partial_p 13/13 |
+
+## Session 26 (2026-11-07) — bug-hunt round (battery 10/11)
+
+| Step | What changed | Files | Verified |
+|------|--------------|-------|----------|
+| S26.1 | Fixed circular-import cycle: `solvers.py` imports `solvers_plus`/`solvers_pack3`/`solvers_pack7`, which did top-level `from solvers_more import …` — so importing `solvers_more` first (e.g. `test_flaws`) deadlocked midway and `test_flaws` couldn't even import. Converted to late-bound `import solvers_more as SM; SM.<name>` (resolution at call time). | solvers_plus.py, solvers_pack3.py, solvers_pack7.py | all import orders now work; test_flaws imports & runs |
+| S26.2 | `test_flaws.py` was stale: `Context(deadline=…)` missing required `flag_regex`; hardcoded foreign `/home/chillinmalware/…` for `sys.path` and `flaws.md` output. Fixed to local ROOT + default `flag_regex`. | test_flaws.py | suite runs end-to-end |
+| S26.3 | `test_flaws.py` p-1/p+1 false positives: when BOTH p-1 and q-1 (or p+1/q+1) are B-smooth, the method provably returns only the trivial factor n (a−1 ≡ 0 mod n / V_M ≡ 2 mod n) — expected, not a flaw. Test now exempts that case. | test_flaws.py | **0 flaws** across all 5 sub-tests |
+| S26.4 | `solve_hex` separator-tolerant parser gated on *token-count parity* — so odd-length byte payloads (e.g. 13-byte flags) in `0x..,0x..` or `bytes: 92 94 …` formats never parsed. Now gates on total hex-nibble count being even & ≥16. | solvers.py | all 10 sephex formats recover directly via hex → single-byte-XOR |
+| S26.5 | Re-ran regression gates after the edits. | — | battery **10/11** (partial_p PASS); partial-p 13/13; E3 15/15; e4 10/10; matrix OK; rec_naive 20/20; rsa_extra PASS |
+
+Note (measured, not fixed): the randomized `test_blind{1..4}` suites are timing-nondeterministic — same fixed seed produced 14–22/25 across runs, so the <90% "real bug" flag is not a stable signal. xorfamily 8/10 is at/above the accepted 7/10 target; families_turn misses are the strict <3s rank-0 timing criterion; affinefamily caesar4 is the documented flag-shaped-shell limitation.
+
+## Session 27 (2026-11-07) — scoring speedup + pool regression hunt
+
+| Step | What changed | Files | Verified |
+|------|--------------|-------|----------|
+| S27.1 | `plain_text_score` recomputed `text.translate(_LEET)` twice and ran `_letters` twice per call (once directly, once inside `quadgram_score`). Added `_quadgram_from_letters` and reuse the computed letters/translate — byte-identical floats, ~1/3 fewer passes. `english_confidence` likewise reuses its `_letters` result instead of re-summing. | scoring.py | 0 mismatches over 120,000 randomized comparisons vs. original math |
+| S27.2 | `_letters` rewritten from a per-char `lower()`+generator to a single C-level `re.sub(r"[^a-z]", "", text.lower())` — identical output (verified on 50k strings), 1.85× faster. | scoring.py | equivalence + speed verified |
+| S27.3 | Attempted lazy process-pool creation (skip the spawn for small inputs). **Regression discovered**: E3 c12 (`dh_shared_secret_xor`) stopped recovering — the pool is load-bearing for deep multi-step chains (`reverse-words → Diffie-Hellman XOR`), not a pure speed win. Reverted to the eager pool; c12 back to PASS (26s). | core.py, autocrypt.py | E3 15/15; c12 PASS |
+| S27.4 | Conclusively ruled out causes for `test_matrix` `base64x2` / `reverse` failures: bit-identical scoring under the original functions reproduces identical results (both fail deterministically 3/3). Pre-existing coverage gaps (nonstandard-prefix flags scored low via `assess`, double-base64 not chained), not introduced by S27.1/S27.2. | — | matrix 13/15 (baseline) |
+| S27.5 | families_turn re-run. Scoring speedup pushed sephex case 8 under the 3s wall (3.1→~1.9s); case 2 improved 5.6→~4s but still above the 3s target (rank 0 correct). | — | families **39/40** (sephex 9/10), 0 FP |
+| S27.6 | Full regression re-run after the edits. | — | E3 15/15; families 39/40; rec_naive 20/20; rsa_extra PASS; e4 10/10; base36 PASS; b16 PASS; keystream PASS; hexfamily PASS; multijob PASS |

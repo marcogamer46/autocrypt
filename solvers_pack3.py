@@ -10,7 +10,7 @@ import string
 from core import solver
 from scoring import assess, plain_text_score
 import solvers as S
-from solvers_more import _vals, _pick, _txt
+import solvers_more as SM  # late-bound: breaks the solvers<->solvers_more import cycle
 
 
 def _bits_to_bytes(bits, n=8):
@@ -25,9 +25,9 @@ def _printable(b, lim=.95):
 @solver("RSA-sum-leak", lambda fp: .999 if fp["charset"] == "ascii-text" and re.search(
     r"\b(?:p_?plus_?q|sum_?pq|p\+q|pq_sum|s|x)\s*=", fp.get("_text", "")) else 0.0)
 def solve_sum_leak(data, ctx):
-    v = _vals(data, ctx)
-    n, c, e = v.get("n"), _pick(v, "c", "ct", "enc", "cyphertext", "ciphertext"), v.get("e", 65537)
-    s = _pick(v, "p_plus_q", "pplusq", "sum_pq", "pq_sum", "s", "x")
+    v = SM._vals(data, ctx)
+    n, c, e = v.get("n"), SM._pick(v, "c", "ct", "enc", "cyphertext", "ciphertext"), v.get("e", 65537)
+    s = SM._pick(v, "p_plus_q", "pplusq", "sum_pq", "pq_sum", "s", "x")
     if not (n and c and s):
         return
     disc = s * s - 4 * n
@@ -44,7 +44,7 @@ def solve_sum_leak(data, ctx):
     set(re.sub(r"\s", "", fp.get("_text", "")))) == 2 and len(re.sub(r"\s", "", fp.get("_text", ""))) >= 16
     and not re.fullmatch(r"[01\s]+", fp.get("_text", "") or "-") else 0.0)
 def solve_two_symbol(data, ctx):
-    t = re.sub(r"\s", "", _txt(data))
+    t = re.sub(r"\s", "", SM._txt(data))
     syms = sorted(set(t))
     if len(syms) != 2:
         return
@@ -60,7 +60,7 @@ def solve_two_symbol(data, ctx):
 @solver("dna-2bit", lambda fp: .4 if fp["charset"] == "ascii-text" and re.fullmatch(
     r"[ACGTacgt\s]{16,}", fp.get("_text", "") or "-") else 0.0)
 def solve_dna(data, ctx):
-    t = re.sub(r"\s", "", _txt(data)).upper()
+    t = re.sub(r"\s", "", SM._txt(data)).upper()
     import itertools
     seen = set()
     for perm in itertools.permutations("0123", 4):
@@ -94,7 +94,7 @@ def solve_braille(data, ctx):
 @solver("base-variants", lambda fp: .35 if fp["charset"] == "ascii-text" and re.fullmatch(
     r"[A-Za-z0-9+/=\s]{8,}", fp.get("_text", "") or "-") else 0.0)
 def solve_base_variants(data, ctx):
-    t = re.sub(r"\s", "", _txt(data))
+    t = re.sub(r"\s", "", SM._txt(data))
     tries = []
     try:
         tries.append(("base32hex", base64.b32hexdecode(t.upper() + "=" * (-len(t) % 8))))
@@ -132,7 +132,7 @@ def solve_new_caesar(data, ctx):
     # Use the longest contiguous [a-p] run (the actual ciphertext). Simple
     # filtering can accidentally splice letters from hint lines like
     # "key_bytes=0x62" (k/e/b are all in a-p) into the nibble stream.
-    runs = re.findall(r"(?i)[a-p]+", _txt(data))
+    runs = re.findall(r"(?i)[a-p]+", SM._txt(data))
     t = max(runs, key=len) if runs else ""
     if len(t) < 16 or len(t) % 2 != 0:
         return
@@ -218,7 +218,7 @@ def _keys(t, ctx):
 
 @solver("rc4", lambda fp: .5 if fp["charset"] in ("ascii-text", "binary", "mixed") and fp["length"] >= 8 else 0.0)
 def solve_rc4(data, ctx):
-    t = _txt(data)
+    t = SM._txt(data)
     raw = _blob({}, t) if t else data
     if not raw:
         return
@@ -236,7 +236,7 @@ def solve_rc4(data, ctx):
 @solver("aes-known-key", lambda fp: .9 if fp["charset"] == "ascii-text" and re.search(
     r"\bkey\s*[:=]", fp.get("_text", ""), re.I) else 0.0)
 def solve_aes(data, ctx):
-    t = _txt(data)
+    t = SM._txt(data)
     v = {}
     for k, x in re.findall(r"\b(key|iv|nonce|ct|enc|cipher\w*|token)\s*[:=]\s*['\"]?([^\s'\",]+)", t, re.I):
         v.setdefault(k.lower(), x)

@@ -29,14 +29,12 @@ __all__ = ["lll", "coppersmith_partial_p"]
 # LLL
 # ---------------------------------------------------------------------------
 
-def lll(basis, delta=0.75):
+def lll(basis, delta=0.75, check=None):
     """Reduce the integer lattice basis `basis` (list of integer rows) with LLL.
 
-    Standard incremental LLL: the Gram–Schmidt objects (B*, mu, ||B*||^2) are
-    maintained as rationals and updated *locally* — size-reduction of row k
-    leaves B*[k] unchanged (it only adds a vector from the span of the earlier
-    rows), and a swap only requires recomputing the orthogonalization of rows
-    k-1..n-1. This is far cheaper than recomputing the full GSO every step.
+    `check` is an optional zero-arg callable; if it returns falsy, reduction
+    aborts and returns None (used to respect the solver's deadline during a
+    long high-dimension reduction).
     """
     B = [list(map(int, row)) for row in basis]
     n = len(B)
@@ -73,6 +71,8 @@ def lll(basis, delta=0.75):
 
     k = 1
     while k < n:
+        if check is not None and not check():
+            return None
         # size-reduce B[k] against B[0..k-1]
         changed = False
         for j in range(k - 1, -1, -1):
@@ -110,7 +110,8 @@ def lll(basis, delta=0.75):
 # Coppersmith: known high bits of p
 # ---------------------------------------------------------------------------
 
-def coppersmith_partial_p(n, p_high, m, mm=3, tt=1, check=None):
+def coppersmith_partial_p(n, p_high, m, mm=3, tt=1, check=None, escalate=True,
+                           max_escalate=None):
     """Recover a prime factor p of n given its high bits.
 
     p = (p_high << m) + x,  with 0 <= x < 2^m.
@@ -136,7 +137,14 @@ def coppersmith_partial_p(n, p_high, m, mm=3, tt=1, check=None):
         return g
 
     # Escalation ladder: (mm, tt) try in order of increasing lattice size.
-    ladder = [(mm, tt), (mm + 1, tt + 1), (mm + 2, tt + 2), (mm + 3, tt + 3)]
+    # When escalate=False the caller (e.g. the hypothesis sweep in
+    # _recover_p_partial) wants a single cheap low-dimension attempt per m.
+    if escalate:
+        ladder = [(mm, tt), (mm + 1, tt + 1), (mm + 2, tt + 2), (mm + 3, tt + 3)]
+    else:
+        ladder = [(mm, tt)]
+    if max_escalate is not None:
+        ladder = ladder[:max_escalate]
     seen = set()
     for mmc, ttc in ladder:
         key = (mmc, ttc)
@@ -192,7 +200,9 @@ def _coppersmith_try(n, a, X, mm, tt, check):
             r.pop()
         dim -= 1
 
-    reduced = lll(rows)
+    reduced = lll(rows, check=check)
+    if reduced is None:
+        return None  # aborted by deadline check
 
     # Try several shortest vectors; each yields an H(r) = 0 polynomial.
     D = len(reduced[0]) - 1  # max degree in scaled variable

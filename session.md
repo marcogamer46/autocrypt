@@ -250,3 +250,45 @@ User decision (2026-11-05): **Install tools & retry**. ✅
   → now tries the inferred m first.
 - Battery **10/11**; run_tests regression **43/43**. Only boneh_durfee
   remains (d≈N^0.30 above the Boneh–Durfee bound — generator parameter issue).
+
+## Session 23 (2026-11-07) — partial-p unbalanced generalization
+- `_recover_p_partial` sweep now interleaves upper/lower imbalance hypotheses,
+  uses cheap `mm=2` single-dim tries (cap 30) + escalated fallback. Unbalanced
+  852-bit n / 512-bit p (m=160) recovers in ~13s; previously missed → 65-101s.
+- `lattice.coppersmith_partial_p` gained `escalate=False`.
+- `rsa_battery.py` subprocess uses `sys.executable` (python3 was a stub).
+- Battery stays 10/11; partial_p PASS; balanced partial_p still <1s.
+- NOTE: the venv `./.venv/Scripts/python.exe` is the interpreter WITH gmpy2 —
+  run tests/battery with it (the uv shim python3.12 lacks gmpy2 → 5x slower LLL).
+
+## Session 24 (2026-11-07) — hardening + portability
+- Fixed three real bugs found by the unbalanced-partial-p work:
+  1. `czroots.find_roots` crashed when the root-finder prime divided the
+     leading coefficient (`pow(L,-1,P)` ValueError) → now picks a prime
+     coprime to the leading coeff.
+  2. The escalated fallback in `_recover_p_partial` was a no-op because the
+     cheap sweep had marked every m tried → the `tried` set is now cleared
+     before the fallback.
+  3. LLL could hang for minutes on a high-dimension lattice past the budget →
+     `lll` now takes a deadline `check` and aborts (returns None).
+- Restored the proven cheap-first hypothesis sweep (balanced first, interleaved
+  upper/lower imbalance) with a small escalated fallback only on the closest
+  candidates. Unbalanced partial-p cases that previously burned the whole
+  budget on wrong-m escalation now recover in ~8-17s.
+- New `test_partial_p.py` regression (13 balanced+unbalanced cases) passes
+  13/13. Battery stays 10/11 with partial_p PASS; E3 15/15.
+- Subprocess portability: all test scripts + battery now invoke autocrypt via
+  `sys.executable` (python3 is a stub on this machine); fixed a mis-injected
+  `import sys` inside docstrings.
+
+## Session 25 (2026-11-07)
+
+- `core.py`: verified exact attacks that decrypt to printable non-flag plaintext
+  now score 0.98 and rank at 0 (real-encryption recovery, not just `flag{...}`
+  shells); ambiguous/non-printable recoveries stay capped at 0.55.
+- `solvers.py`: added RSA e=1 (identity) and Rabin e=2 (sqrt) branches.
+- Fixed Tonelli–Shanks: `t` was updated with the stale `c` instead of
+  `c_new = b²` (tuple-unpacking bug) → some quadratic residues returned None.
+  Brute-force QR sweep 0/16516 bad after fix.
+- New `test_rsa_extra.py` (e=1 + Rabin) passes; battery 10/11, partial-p
+  13/13, E3 15/15.

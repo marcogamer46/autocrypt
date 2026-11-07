@@ -25,7 +25,7 @@ def contention_helpers(n=4):
         if not Path(fx).exists():
             continue
         procs.append(subprocess.Popen(
-            ["python3", "autocrypt.py", fx, "--timeout", "30"],
+            [sys.executable, "autocrypt.py", fx, "--timeout", "30"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
     return procs
 

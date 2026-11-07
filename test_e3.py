@@ -3,6 +3,7 @@
 source echo and its plaintext contains the exact flag. Prints rank, chain,
 time-to-first-exact, total wall, expected vs top. Cases over 35s are marked
 as budget violations."""
+import sys
 import json
 import re
 import subprocess
@@ -32,7 +33,7 @@ CASES = [
 
 
 def run(*paths):
-    args = ["python3", "autocrypt.py"] + [str(p) for p in paths] + \
+    args = [sys.executable, "autocrypt.py"] + [str(p) for p in paths] + \
         ["--timeout", "30", "--json", "--top", "6"]
     t0 = time.time()
     r = subprocess.run(args, capture_output=True, text=True, timeout=90)
