@@ -12,7 +12,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "1.0"
+VERSION = "1.1"
 _ANSI = {"cyan": "\033[36m", "green": "\033[32m", "yellow": "\033[33m",
          "red": "\033[31m", "dim": "\033[90m", "reset": "\033[0m"}
 
@@ -104,7 +104,19 @@ def empty_panel(status, width=None):
     color = "yellow" if status in ("TIMEOUT", "TOO_SHORT", "SOLVER_FAILED") else "green"
     return box(title, [message], width, color)
 
-def results_panel(results, width=None):
+def verdict_banner(results):
+    """A one-line headline verdict for the ranked results."""
+    if not results:
+        return ""
+    top = results[0]
+    conf = top.get("confidence", 0.0)
+    if top.get("is_flag") and conf >= 0.80:
+        return paint(f"✔ Flag-like result at rank 1 (confidence {conf:.2f})", "green")
+    if conf >= 0.80:
+        return paint(f"Best guess at rank 1 (confidence {conf:.2f})", "yellow")
+    return paint("Low-confidence candidates only — treat with caution.", "yellow")
+
+def results_panel(results, width=None, preview_boxes=3):
     width = max(1, width or _width())
     lines, plaintext_boxes = [], []
     for rank, item in enumerate(results, 1):
@@ -124,7 +136,12 @@ def results_panel(results, width=None):
             chunks.append("[preview truncated; save results for full plaintext]")
         plaintext_boxes.append(box(f"Plaintext #{rank}", chunks, width, "cyan"))
     sections = [box("Ranked results", lines, width, "cyan")]
-    sections.extend(plaintext_boxes)
+    # By default only preview the top few full plaintexts; the summaries above
+    # always list every rank, and "save" writes all of them regardless.
+    sections.extend(plaintext_boxes[:max(1, preview_boxes)])
+    if len(plaintext_boxes) > max(1, preview_boxes):
+        sections.append(paint(f"(… {len(plaintext_boxes) - max(1, preview_boxes)} more plaintexts; "
+                              "use save to write them all)", "dim"))
     return "\n".join(sections)
 
 def _valid_regex(pattern):
@@ -276,14 +293,20 @@ def _solve(data, settings, params=""):
             sys.stdout.flush()
 
 def _show(data, settings, params=""):
+    _t0 = time.monotonic()
     fp, results, ctx = _solve(data, settings, params)
+    _elapsed = time.monotonic() - _t0
     print(fingerprint_panel(fp))
+    verdict = verdict_banner(results)
+    if verdict:
+        print(verdict)
     print("\n".join(paint("Finding: " + f, "yellow") for f in dict.fromkeys(ctx.findings)))
     print("\n".join(paint("Solver failure: " + f, "red") for f in dict.fromkeys(ctx.failures)))
     if results:
         print(results_panel(results))
     else:
         print(empty_panel(results.status))
+    print(paint(f"Solved in {_elapsed:.1f}s (budget {settings['timeout']:.0f}s).", "dim"))
     return results
 
 def _paste():

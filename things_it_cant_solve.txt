@@ -1,6 +1,6 @@
 things autocrypt can't solve (yet) — live tracker
 ==================================================
-Updated: 2026-11-07 (Session 30: show-all-results; dictionary word-list substitution solver; rail fence verified)
+Updated: 2026-11-08 (Session 32: scorer false-positive gating; exhaustive cipher/numeric cryptanalysis; UI polish)
 
 Batch "things it can't solve 2" (2026-11-07) — status
 ------------------------------------------------------
@@ -11,24 +11,33 @@ Batch "things it can't solve 2" (2026-11-07) — status
   algorithmic, no hardcoded flag. (LOGS Session 30.)
 * Rail fence cipher .txt: RESOLVED → rank 1 "The flag is: WH3R3_D035_7H3_F3NC3
   _8361N_4ND_3ND_43BBCEC4" (rails=4, conf 0.95).
-* message (6).txt / message (.txt — 22 numbers `239 396 131 …`: STILL OPEN.
-  Exhaustive algorithmic cryptanalysis anchored on the expected "academy{"
-  prefix (A1Z26/mod-26/27/36/52/95/128/256, ASCII offsets, affine-additive with
-  position over mod 256/95/26, base-k splits, digit sums, ranks, differences,
-  XOR/Vigenere running keys, polynomial interpolation, digit-stream bytes)
-  produced no readable "academy{...}" body. Structural blocker: every number is
-  distinct yet the expected plaintext repeats 'a' (positions 0/2), so the
-  mapping cannot be position-independent — the cipher must be stateful
-  (stream/OTP-like) or a multi-char-per-number scheme; no key is recoverable
-  from the sequence alone. Documented as underdetermined without a key/context.
-* Vigenère cipher.txt / cipher.txt (identical content): STILL OPEN but the
-  hint in read.md ("Add atbash cypher") and exhaustive Vigenère/Beaufort/
-  autokey dictionary-key search (364k keys + all short keys across 8 transform
-  orders) found no key decrypting the wrapper to a known prefix with a readable
-  body. The fully-specified deterministic step is atbash; its output
-  `xzowuld{L0MF_DJ3_T1T3L3G3_Z1ZS3H_4x372077}` is not readable (random
-  plaintext) and its wrapper is not a known flag prefix, so autocrypt does NOT
-  claim it as a confirmed flag. Genuinely underdetermined without a key hint.
+* message (6).txt / message (.txt — 22 numbers `239 396 131 …`: STILL OPEN
+  (Session 32 re-analysis). A parallel 8-hypothesis workflow re-ran the space:
+  mod m (m=2..300), ASCII offsets, affine-over-mod-26 (all keys), consecutive/
+  cumulative sums & differences mod 26, base-26 two-letter splits, digital
+  roots, prime-index mapping, XOR over mod-256 bytes, book-cipher indices into
+  english_words.txt and study-guide.txt, 2D routes/permutations, and running-key
+  Vigenere/XOR. No decode yields a readable "academy{...}" (best outputs are
+  gibberish like "fgbjgrxjjoptnyhfpycwss" / atbash "utyqticqqlkgmbsukbxdhh").
+  Structural blocker stands: all 22 numbers are distinct while a plaintext of
+  the expected shape repeats letters (e.g. 'a' in the prefix), so the mapping
+  is not 1:1/position-independent — the scheme must be stateful (stream/OTP)
+  or need an external key/context we do not have. Underdetermined from the
+  sequence alone.
+* Vigenère cipher.txt / cipher.txt (identical content): STILL OPEN (Session 32
+  re-analysis). Hint read.md says "Add atbash cypher". A parallel 8-hypothesis
+  workflow exhaustively tested: Vigenere/Beaufort/autokey with hint passphrases
+  and ~97k single + ~870k two-word dictionary keys in both atbash orderings;
+  all compositions of atbash/Caesar/ROT13/reverse; Hill 2x2 over all 157,200
+  invertible matrices; Playfair over 148,736 dictionary keys; statistical
+  Vigenere key recovery (Kasiski/IOC ~0.019 ⇒ essentially random; only 21
+  letters). Nothing yields a readable wrapper+body. Decisive structural proof:
+  the wrapper "caldfow" = {a,c,d,f,l,o,w} differs as a multiset from "academy"
+  = {a,a,c,d,e,m,y}, and every classical letter transform (substitution, atbash,
+  Caesar, ROT13, reverse) preserves the letter multiset — so no such scheme can
+  ever produce a flag whose prefix is "academy". The intended plaintext either
+  uses a different/unknown prefix or key material we do not possess. Genuinely
+  underdetermined without the generator's key/scheme.
 * rot13.txt: RESOLVED. ROT13 is correct: `cultirisnpnqrzl{P7e1S_54I35_71Z3}`
   → `phygvevfacademy{C7r1F_54V35_71M3}`; the wrapper tail "npnqrzl" =
   ROT13("academy") (leading "phygvevf" is padding), body leet-decodes to

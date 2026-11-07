@@ -914,7 +914,14 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                         ev_cover = len(match_text) / nonws_len_ev
                         ev_dgain = (leet_body_dict_fraction(text) -
                                     leet_body_dict_fraction(blob.decode("latin-1")))
-                    strong_evidence = flag_shaped and ev_cover >= 0.9 and ev_dgain > 0
+                    # Body evidence must be substantial, not just any improvement
+                    # over junk: a classical scramble (e.g. affine+reverse) can
+                    # nudge a garbage body from 0% to ~20% leet-dictionary coverage
+                    # without decoding anything real. Only treat the recovery as
+                    # strong-evidence when the body actually reads as English or is
+                    # decisively leet-dictionary heavy (like real flag bodies).
+                    strong_evidence = flag_shaped and ev_cover >= 0.9 and ev_dgain > 0 \
+                        and (clear_english(text) or leet_body_dict_fraction(text) >= 0.35)
                     recovered_bad = bool(recovered) and not (is_flag or flag_shaped) \
                         and printable_ratio < 0.9
                     if recovered_bad:
@@ -1049,10 +1056,22 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                                     # scrambles the body).
                                     fixed_mapping = method_base in (
                                         "atbash", "rot13", "rot47", "caesar")
+                                    # A keyless classical transform (atbash/rot13/
+                                    # rot47/caesar) can restyle a flag-shaped
+                                    # ciphertext into another junk flag without
+                                    # decoding anything (e.g. ROT13 of garbage
+                                    # inflates the plausibility heuristic while
+                                    # the body stays 0% dictionary). Only reward
+                                    # the lift when the body genuinely improves
+                                    # into English/leet-dictionary words, matching
+                                    # the _body_good standard.
                                     if fixed_mapping or ev_dgain > 0:
-                                        delta = flag_plausibility(text) - input_plaus
-                                        if delta > 0.02:
-                                            score = max(score, 0.86 + 0.11 * min(1.0, delta / 0.4))
+                                        body_good = (clear_english(text)
+                                                     or leet_body_dict_fraction(text) >= 0.4)
+                                        if not fixed_mapping or body_good:
+                                            delta = flag_plausibility(text) - input_plaus
+                                            if delta > 0.02:
+                                                score = max(score, 0.86 + 0.11 * min(1.0, delta / 0.4))
                             else:
                                 score = min(score, 0.55)
                     record = {
