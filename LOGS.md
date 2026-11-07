@@ -353,3 +353,33 @@ Note (measured, not fixed): the randomized `test_blind{1..4}` suites are timing-
 | S27.4 | Conclusively ruled out causes for `test_matrix` `base64x2` / `reverse` failures: bit-identical scoring under the original functions reproduces identical results (both fail deterministically 3/3). Pre-existing coverage gaps (nonstandard-prefix flags scored low via `assess`, double-base64 not chained), not introduced by S27.1/S27.2. | — | matrix 13/15 (baseline) |
 | S27.5 | families_turn re-run. Scoring speedup pushed sephex case 8 under the 3s wall (3.1→~1.9s); case 2 improved 5.6→~4s but still above the 3s target (rank 0 correct). | — | families **39/40** (sephex 9/10), 0 FP |
 | S27.6 | Full regression re-run after the edits. | — | E3 15/15; families 39/40; rec_naive 20/20; rsa_extra PASS; e4 10/10; base36 PASS; b16 PASS; keystream PASS; hexfamily PASS; multijob PASS |
+
+## Session 28 (2026-11-07) — sephex family speed + verified-attack scoring
+
+| Step | What changed | Files | Verified |
+|------|--------------|-------|----------|
+| S28.1 | `sephex_2` exceeded the 3s families wall (3.9s). Root cause: the coordinate-ascent branch ran a large random-restart budget on implausible key lengths. Added a restart/round cap when a column holds < 5 bytes (`if L and n // L < 5: restarts = min(restarts, 2); ascent_rounds = min(ascent_rounds, 2)`); the true short key is handled by the L=1..3 joint paths anyway. sephex_2 dropped to ~2.3s. | solvers.py | families **40/40**, 0 FP |
+| S28.2 | `ev_cover` / verified-attack scoring for recovered non-statistical rows (flag-shaped or exact) so genuine cryptanalytic recoveries rank correctly. | core.py, solvers_pack7.py | hash-crack family speed + score verified |
+| S28.3 | Committed and pushed Sessions 25-28 as `082cd05` so the user can test on another machine. | git | pushed to origin/main |
+
+## Session 29 (2026-11-07) — xorfamily short-flag search fix
+
+| Step | What changed | Files | Verified |
+|------|--------------|-------|----------|
+| S29.1 | Root-caused the two `test_xorfamily` L=5 short-flag failures. `xor5_w0`: the true key IS in the shape-consistent candidate set, but the joint-product trim (to ≤40k) deletes the deep-ranked true bytes (rank 20-45 of ~60-90 per column — short 3-byte columns give weak per-column unigram evidence). `xor5_w2`: the true key is itself outscored by a wrong 5-byte key that decodes to an equally-plausible leet flag under the flag-aware objective (inherent ambiguity; see S29.4). | — | probes reproduced both |
+| S29.2 | Added a broad, deterministic coordinate-ascent pass over the **full shape-consistent space** for L≥4/n≤60, appending its best result so the true key is evaluated even when the joint-enum trim cut it. It only runs when (a) the raw shape product exceeds the 40k trim threshold (the only case where trimming can lose the true key) and (b) no shorter key (L≤3) already explained the blob as a strong flag — that gate avoids wasting budget on spurious long-key hypotheses (e.g. single-byte XOR data read as L=5). | solvers.py | xorfamily **9/10**; families **40/40**; E3 15/15; E4 10/10 |
+| S29.3 | Verified the gate restores sephex timing: with the ascent running unconditionally, sephex_2 went 2.77s→5.7s; with the short-flag gate it returns to ~2.3s (families 40/40). | — | timing A/B |
+| S29.4 | `xor5_w2` remains a known inherent ambiguity: two different 5-byte keys decode the same ciphertext to valid leet flags, and the wrong one (`el0zm_rOos{nOt}`) out-scores the true `AuLlm{k3ys_w3b}` (2.897 vs 2.413) under the exact flag-aware objective. No search change can fix it; forcing it would require a fragile scoring tweak that risks regressing families/matrix. Documented as a deliberate limit. | — | 9/10 retained |
+
+## Session 30 (2026-11-07) — show-all-results + dictionary word-list substitution solver
+
+| Step | What changed | Files | Verified |
+|------|--------------|-------|----------|
+| S30.1 | User request: ranked results only ever showed 5. Raised both `solve_data`'s `top=5→200` and the CLI `--top default=5→200` so **all** ranked results surface. | autocrypt.py | --json shows all rows; matrix unaffected |
+| S30.2 | New `substitution-wordlist` solver: recovers a monoalphabetic substitution from an **encrypted word-list corpus + flag phrase** (the "study-guide" case) by AC-3 word-pattern constraint propagation against a bundled English dictionary (`english_words.txt`, 370k words). Queue-based worklist AC-3 + candidate-list cap runs in ~1.5s (was ~5.2s on naive full sweeps). Front-gated on large ascii-text corpora; skips already-plain-English input. | solvers.py, english_words.txt (new) | decrypts flag to `perhaps_the_dog_jumped_over_was_just_tired` (→100% corpus coverage) at rank 0 |
+| S30.3 | Label the recovery `cracked monoalphabetic substitution (dictionary wordlist)` so core's `recovered` path retains it (English-confidence gates would otherwise bury the underscore/leet phrase). No flag text is hardcoded — the solve is fully algorithmic. | solvers.py | rank 0, confidence 0.96 |
+| S30.4 | New regression `test_substitution_wordlist.py`: builds a synthetic encrypted wordlist+flag, runs the full pipeline, asserts the decrypted flag at rank 0. | test_substitution_wordlist.py (new) | PASS |
+| S30.5 | Re-ran regression gates after the solver edits. | — | E3 **15/15**; E4 **10/10**; families **40/40**, 0 FP; matrix OK (23/23 rows); substitution PASS |
+
+Remaining open from the "things it can't solve 2" batch (honest non-solves): the 22-number numeric message (no reversible dictionary/linear/ASCII/mod mapping yields readable text — ambiguous), the Vigenère/cipher pair (identical 43-byte ciphertext, unknown key, no crib), and `rot13.txt` (ROT13 transform is correct but output is non-dictionary junk — likely an intentionally random flag or extra unprovided layer). These are added to `things_it_cant_solve.txt`.
+

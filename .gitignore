@@ -9,6 +9,14 @@ tm.py
 # Scratch / generated outputs
 *.bin
 *.zip
+scratch_*.py
+scratch_*.txt
+tm_*.txt
+tm_*.py
+tm_*.json
+*.tmp
+rail_out.json
+_download*
 
 # Raw downloaded CTF training data stays local (not versioned). Some bundles
 # contain leaked-flag files (Easy_Peasy, unary_binary, ...) that must NOT be

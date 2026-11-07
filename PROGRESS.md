@@ -95,7 +95,7 @@
 5. E8 - README.md: install, usage, full technique list, limits (strong modern crypto not breakable), .py+.txt workflow, "how to add a solver".
 
 ## Deferred
-- J1c beam search / pinned-column decomposition for L≥4 short-flag repeating-XOR (7/10 accepted as the final result — 4-5-byte keys on ~20-char flags are inherently ambiguous). Revisit only if E3 shows real cases with that shape.
+- J1c L≥4 short-flag repeating-XOR: 9/10 after Session 29 (gated broad ascent over the shape space). The single remaining case (`xor5_w2`) is a genuine ambiguity — a wrong 5-byte key decodes the ciphertext to an equally-plausible leet flag that out-scores the true one under the objective. Revisit only if E3 shows real cases with that shape.
 
 ## Known bugs
 - AES/Fernet need optional pycryptodome/cryptography (skipped gracefully; no pip here).
@@ -107,7 +107,7 @@
 - `python3 test_flagshape.py` -> FLAGSHAPE: ALL OK.
 - `python3 test_multijob.py` -> MULTIJOB: N/N equal (j1 vs j4 identical top-3).
 - Hex-layer family: `python3 test_hexfamily.py <seed> --matrix` (mixed), `--grid d12|d34` (depth split).
-- XOR family: `python3 test_xorfamily.py` (seed 20270703: 7/10 accepted, L≥4 short-flag ambiguity).
+- XOR family: `python3 test_xorfamily.py` (seed 20270703: 9/10, one L≥4 short-flag ambiguity remains — see Session 29).
 - Blind seen-data regressions: `python3 test_blind3.py` (24-25/25), `python3 test_blind4.py` (new seeds, report-only).
 - Strict mode: any of the above under `AUTOCRYPT_STRICT=1` (or `--strict`) fails on unexpected solver exceptions; `run_tests.sh` already exports it.
 - Flake checks: `python3 flakecheck.py <seed> --grid d34 [--contend]`, `--xorfam` for the XOR family.
@@ -289,3 +289,49 @@
   `solve_rsa`; both pass in ~2s.
 - Verified: battery **10/11** (partial_p PASS), test_partial_p **13/13**,
   E3 **15/15**.
+
+## Session 29 (2026-11-07) — xorfamily short-flag search fix
+
+- **Root cause.** Two L=5 short-flag failures (`xor5_w0`, `xor5_w2`). The joint
+  enumeration's product trim (to ≤40k) deletes the true key byte when it sits deep
+  in a column's unigram ranking — short 3-byte columns carry too little per-column
+  evidence to rank the true byte highly. The true key is in the shape-consistent
+  candidate set but gets cut before it is ever scored.
+- **Fix.** For L≥4/n≤60, run a broad, deterministic coordinate ascent over the
+  full shape-consistent space and append its best result, so the true key is
+  always evaluated even when the joint-enum trimmed it away. Gated to only run
+  when (a) the raw shape product exceeds the trim threshold and (b) no shorter
+  key (L≤3) already explained the blob as a strong flag — the latter keeps
+  single-byte-XOR data (sephex) from burning budget on a spurious L=5 search.
+- **Result.** xorfamily **9/10** (was 7/10 accepted). families **40/40**, E3
+  15/15, E4 10/10 all confirmed. The remaining `xor5_w2` is a genuine ambiguity
+  (a wrong key decodes to an equally-plausible leet flag that scores higher under
+  the objective); not forced to avoid fragile scoring tweaks.
+
+## Session 30 (2026-11-07) — show-all-results + dictionary word-list substitution solver
+
+- **Show all ranked results.** The CLI/solver default `--top` was 5, so only 5
+  ranked results ever displayed. Raised both defaults to 200 (`solve_data` and
+  `--top`), so every ranked recovery surfaces.
+- **Dictionary word-list substitution solver.** A monoalphabetic substitution over
+  a corpus of single English words (one per line) cannot be solved by letter
+  frequency (cipher words are unique) — but the per-word letter *pattern* is
+  invariant, so aligning encrypted tokens against a dictionary pins the
+  permutation. New `substitution-wordlist` solver runs AC-3 constraint
+  propagation over word patterns (queue-based worklist + candidate-list cap,
+  ~1.5s) and decrypts the flag phrase. Front-gated to large ascii-text corpora;
+  skips inputs that are already plain English.
+- **Recovery labeling.** The solver emits `cracked monoalphabetic substitution
+  (dictionary wordlist)`, which routes through core's `recovered` retention path
+  so the underscore/leet flag phrase isn't buried by the English-confidence gates.
+  Fully algorithmic — no flag text is hardcoded.
+- **New regression `test_substitution_wordlist.py`** builds a synthetic encrypted
+  wordlist+flag and requires the decrypted flag at rank 0.
+- **Result.** The study-guide+flag challenge from "things it can't solve 2" now
+  recovers `perhaps_the_dog_jumped_over_was_just_tired` at rank 0 (≈100% corpus
+  coverage). Rail fence case already rank 1. Regression: E3 15/15, E4 10/10,
+  families 40/40, matrix OK, substitution PASS.
+- **Still open (honest).** numeric 22-number message (no reversible mapping found;
+  ambiguous), Vigenère/cipher pair (identical ciphertext, unknown key, no crib),
+  and `rot13.txt` (ROT13 output is non-dictionary junk — random flag or extra
+  unprovided layer). Tracked in `things_it_cant_solve.txt`.

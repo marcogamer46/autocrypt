@@ -19,8 +19,37 @@ from scoring import (has_partial_english, flag_plausibility, is_flagish,
 # Transpositions only reorder letters: if the input is already flag-shaped, a
 # reordered copy that is also flag-shaped is coincidence, not a decryption.
 _PERMUTING = {"rail fence", "scytale", "columnar transposition", "columnar transposition (brute)"}
+_TRANSPOSITION_KW = ("rail", "scytale", "columnar")
+_SENTENCE_WORDS = set(
+    "the a an and or but for nor so yet is are was were be been am will would "
+    "can could should may might must do did does have has had of to in on at "
+    "by with from into onto about against during before after above below "
+    "between under over through up down off out"
+    .split())
 # Fixed (keyless) letter substitutions: output shape proves the plaintext.
 _FIXED_SUBSTITUTIONS = {"atbash"}
+
+
+def _is_transposition(method: str) -> bool:
+    m = method.split("(", 1)[0].lower().strip()
+    return any(k in m for k in _TRANSPOSITION_KW)
+
+
+def _sentenceyish(text: str) -> bool:
+    """True when a decode reads like a short English sentence: several
+    alphabetic tokens including a couple of high-frequency function words.
+
+    Transposition decodes (rail fence, scytale, columnar) preserve every source
+    character, so a correct rail count reassembles the plaintext into real
+    prose; wrong counts produce scrambled token soup. This is strong evidence a
+    short non-flag transposition recovery is genuine, even when leet digits
+    make the quadgram/dictionary scores underrate it (e.g. "WH3R3_D035").
+    """
+    toks = re.findall(r"[A-Za-z]{2,}", text)
+    if len(toks) < 4 or sum(ch.isalpha() for ch in text) < 14:
+        return False
+    hits = sum(1 for t in toks if t.lower() in _SENTENCE_WORDS)
+    return hits >= 2
 # Letter-wise ciphers never reorder letters: if their output lost separators
 # (and the letter multiset is identical to the input's), we may safely
 # re-interleave the input's separators. Transpositions (rail fence, columnar,
@@ -942,7 +971,8 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                     # Anti-noise gate: a non-flag candidate that is not clearly
                     # English must never outrank a real English decode. Cap it
                     # below the 0.60 display/retention floor.
-                    if not (is_flag or flag_shaped or recovered) and english_confidence(text) < 0.35:
+                    if not (is_flag or flag_shaped or recovered) and english_confidence(text) < 0.35 \
+                            and not (_is_transposition(method) and _sentenceyish(text)):
                         score = min(score, 0.55)
                     # A statistical boost (0.55 + 0.35·ec) must not let a
                     # candidate that merely has English-L letter frequencies (no
@@ -956,7 +986,8 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                         reason = "Direct settings-based decryption (exact)."
                     if statistical and not (is_flag or flag_shaped or recovered) \
                             and not clear_english(text) \
-                            and not method.startswith("Enigma"):
+                            and not method.startswith("Enigma") \
+                            and not (_is_transposition(method) and _sentenceyish(text)):
                         score = min(score, 0.60)
                     # Statistical margin rows that only LOOK flag-shaped (no real
                     # dictionary gain over the input) must not outrank genuine
@@ -1030,7 +1061,9 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                         "is_flag": is_flag or flag_shaped, "_reason": reason, "_raw": out,
                         "_subst": subst_ok,
                         "_pdelta": flag_plausibility(text) - input_plaus if input_flag else 0.0,
-                        "_english_ok": not (is_flag or flag_shaped) and clear_english(text),
+                        "_english_ok": not (is_flag or flag_shaped) and (
+                            clear_english(text)
+                            or (_is_transposition(method) and _sentenceyish(text))),
                         "_trust": (3 if ((strong_recovery or is_flag or exact_direct or
                                           (recovered and ((is_flagish(text) and ev_cover >= 0.9) or clear_english(text) or _tech))) and not recovered_bad) else
                                    2 if (strong_evidence or

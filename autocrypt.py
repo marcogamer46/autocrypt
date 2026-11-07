@@ -46,7 +46,7 @@ def _load_wordlist(path):
         return [line.rstrip(b"\r\n") for _, line in zip(range(100_000), f)]
 
 
-def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=5,
+def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=200,
                known_plaintext="", wordlist_path="", params="", jobs=None,
                progress_callback=None, flag_format_explicit=False, verbose=False,
                strict=False, fast=False, deep=False, max_depth=6):
@@ -144,7 +144,7 @@ def build_parser():
     p.add_argument("file", nargs="*", default=["-"],
                    help="input path(s): data .txt and/or the challenge .py (static analysis, never run); - for stdin")
     p.add_argument("--flag-format", default=r"\w{1,40}\{.*?\}", help="regex used for early flag detection")
-    p.add_argument("--top", type=int, default=5, help="maximum text results")
+    p.add_argument("--top", type=int, default=200, help="maximum text results")
     p.add_argument("--timeout", type=float, default=20.0, help="global time budget in seconds")
     p.add_argument("-j", "--jobs", type=int, default=None,
                    help="worker processes (default: min(cpu_count,8); 1 = sequential)")
