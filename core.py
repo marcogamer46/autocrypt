@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import collections
+import concurrent.futures
 import hashlib
 import heapq
 import math
@@ -589,6 +590,10 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
         input_plaus = flag_plausibility(blob.decode("latin-1")) if input_flag else 0.0
         jobs = []
         for item in REGISTRY:
+            if ctx.speed < 1 and item.name in ctx.heavy_names:
+                # --fast: skip the most expensive brute-force solvers BEFORE
+                # submitting them to the pool so their work is never wasted.
+                continue
             try:
                 prior = float(item.matches(fp))
             except Exception:
@@ -618,10 +623,6 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
         for prior, item in jobs:
             if ctx.expired():
                 break
-            # --fast: skip the most expensive brute-force solvers; they burn
-            # slices that are better spent on the fast deterministic ones.
-            if ctx.speed < 1 and item.name in ctx.heavy_names:
-                continue
             if item.name == "monoalphabetic-substitution":
                 # Run only on raw input or on the output of a decoder; a
                 # preceding classical step (caesar, affine, ...) is noise.
@@ -662,7 +663,17 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                     ctx.deadline = min(prev_deadline, time.monotonic() + 4.0 * ctx.speed)
                 try:
                     if precomp is not None and item.name in precomp:
-                        _n, presolved, err = precomp[item.name].result()
+                        # Wait for this worker only within the remaining global
+                        # budget; if it is not done by then, treat that as a
+                        # normal budget cutoff rather than blocking the whole
+                        # search on one slow high-priority solver.
+                        _rem = max(0.0, prev_deadline - time.monotonic())
+                        try:
+                            _n, presolved, err = precomp[item.name].result(timeout=_rem)
+                        except concurrent.futures.TimeoutError:
+                            _n, presolved, err = None, [], None
+                            ctx.failures.append(
+                                f"{item.name}: not finished before budget")
                         if err:
                             ctx.failures.append(f"{item.name}: {err}")
                         yielded = iter(presolved)
