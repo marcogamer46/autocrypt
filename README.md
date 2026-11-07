@@ -142,6 +142,7 @@ python3 test_explain.py           # --explain (7/7)
 python3 test_e7.py                # --fast / --deep flags (4/4)
 python3 test_rsapqfamily.py / test_rsaexactfamily.py / test_families_turn.py
 python3 flakecheck.py <seed> --grid d34 [--contend]   # idle vs loaded determinism
+python3 rsa_battery.py           # 11 raw RSA attack classes (baseline 9/11)
 ```
 
 All fixtures under `fixtures/` are generated deterministically by

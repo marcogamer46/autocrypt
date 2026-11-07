@@ -215,3 +215,26 @@ User decision (2026-11-05): **Install tools & retry**. ✅
 - `base36-caesar`: decodes yielding a known-prefix flag inside plausible
   English now carry claim ≥ 0.97 (can outrank an as-is flag-shaped row).
 - Regression maintained 43/43 PASS.
+
+## Session 21 (2026-11-07) — RSA battery: 9/11 solved (lattice gaps)
+- Resumed the session cut off by the 12:30 auto-shutdown (see
+  `_shutdown_reminder.txt`). The in-flight scratch test was `_rsa_battery.py`
+  — a generator of 11 raw RSA attack classes run through autocrypt.
+- Fixed `smooth_prime` hang: the old loop multiplied one small prime at a
+  time and hoped v+1 landed on a prime of exactly `bits` bits (≈1/139 shot,
+  never gave up) — the battery appeared to run forever in *generation* of
+  case 5 (`pm1_smooth`). Replaced with a bounded retry building v from random
+  small-prime exponents (verified 0.00s, p−1 fully smooth).
+- **Result: 9/11 solved.** PASS: baby_pq, small_e_overflow, small_e_exact,
+  wiener, pm1_smooth, fermat_close, common_modulus, hastad, shared_prime.
+  FAIL: **boneh_durfee** (d≈N^0.30 — above Wiener AND above Boneh–Durfee's
+  theoretical bound N^0.292; a textbook BD lattice wouldn't be guaranteed to
+  solve it) and **partial_p** (Coppersmith, top 352/512 bits of p known; x<p
+  mod 2^160 is within Coppersmith's bound ⇒ solvable in principle).
+- Root cause of both FAILs: no lattice (LLL/Coppersmith) module in the
+  solver. Documented in things_it_cant_solve.txt.
+- Promoted `_rsa_battery.py` → **`rsa_battery.py`** as a tracked regression
+  harness (9/11 baseline; re-run after any RSA-solver change).
+- Unresolved RSA work: add an LLL-based Coppersmith small-root solver (would
+  clear partial_p, and boneh_durfee if the generator's d is lowered to
+  ≲N^0.28).
