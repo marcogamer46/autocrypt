@@ -238,3 +238,15 @@ User decision (2026-11-05): **Install tools & retry**. ✅
 - Unresolved RSA work: add an LLL-based Coppersmith small-root solver (would
   clear partial_p, and boneh_durfee if the generator's d is lowered to
   ≲N^0.28).
+
+## Session 22 (2026-11-07) — Coppersmith partial-p SOLVED (battery 10/11)
+- Diagnosed the partial-p failures: both were implementation bugs, not lattice
+  bound issues. (1) The CRT-based root finder's 512-candidate cap dropped the
+  true root → replaced with Cantor–Zassenhaus modulo one large prime
+  (`czroots.py`). (2) LLL was 5x slower under `Fraction` → `gmpy2.mpq`.
+- `coppersmith_partial_p` default `mm=3,tt=1` + escalation ladder; the real
+  1024-bit case now recovers in <1s (was: no recovery after 231s at dim 8).
+- `_recover_p_partial` was trying m ascending from m-9 (≈19 wasted reductions)
+  → now tries the inferred m first.
+- Battery **10/11**; run_tests regression **43/43**. Only boneh_durfee
+  remains (d≈N^0.30 above the Boneh–Durfee bound — generator parameter issue).

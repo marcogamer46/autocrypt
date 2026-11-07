@@ -187,3 +187,42 @@
   `_e5_solved.txt`; `things_it_cant_solve.txt`/`session.md`/`LOGS.md` updated.
 - Open note: native solver lacks a QS/GNFS path — >192-bit semiprimes are
   external-only (documented in README known limits).
+
+## Session 21 (2026-11-07) — RSA battery (9/11); Coppersmith partial-p solver
+- Added **`rsa_battery.py`** (promoted from scratch `_rsa_battery.py`): an
+  11-class raw RSA attack battery. Fixed a `smooth_prime()` generator hang
+  (unbounded random small-prime multiply never terminated) — now finds the
+  smooth prime instantly.
+- Battery baseline: **9/11 solved.** PASS: baby_pq, small_e_overflow,
+  small_e_exact, wiener, pm1_smooth, fermat_close, common_modulus, hastad,
+  shared_prime. FAIL: **boneh_durfee** (d≈N^0.30 — beyond Wiener and above
+  Boneh–Durfee's theoretical bound N^0.292) and **partial_p** (needs a
+  lattice attack). Both documented in `things_it_cant_solve.txt`.
+- Added **`lattice.py`** (pure-Python): LLL basis reduction + Coppersmith
+  univariate for known-high-bits-of-p. Verified on synthetic factor pairs.
+- Wiring (in progress): `_rsa_values` now parses `p_high`; `solve_rsa` gains
+  an `RSA partial-p (Coppersmith)` branch via `_recover_p_partial`; tuning
+  lattice size so the 1024-bit battery case fits the 25s per-case budget.
+
+## Session 22 (2026-11-07) — Coppersmith partial-p SOLVED (battery 10/11)
+- Root cause of the partial-p failures was NOT the lattice bound — it was two
+  real bugs in the new lattice machinery:
+  1. **Polynomial root-finder bug**: the CRT-based root finder took the
+     combinatorial cross-product of roots modulo each small prime and capped
+     the candidate set at 512 — the true root's residue was routinely dropped,
+     so recovery looked like "no roots" even when the lattice bound was met.
+     Replaced with **Cantor–Zassenhaus** root-finding modulo a single large
+     prime (`czroots.py`), which handles huge (5000-bit) coefficients exactly
+     without factoring (verified: finds known roots in random 5000-bit-coeff
+     polys).
+  2. **LLL speed**: swapped `Fraction`-based Gram–Schmidt for
+     `gmpy2.mpq` (~5x faster on Coppersmith-size lattices, identical output).
+- Coppersmith `coppersmith_partial_p` now defaults to `mm=3, tt=1` (dim 5)
+  with an automatic dimension-escalation ladder. Real 1024-bit partial_p case
+  recovers in <1s (8/8 random seeds). `_recover_p_partial` now tries the
+  inferred m first (was ascending from m-9, wasting ~19 lattice reductions).
+- **Battery: 10/11.** partial_p PASSES via `RSA partial-p (Coppersmith)`;
+  the only remaining FAIL is boneh_durfee (d≈N^0.30 is ABOVE Boneh–Durfee's
+  theoretical N^0.292 bound ⇒ generator/parameter issue, documented).
+- Regression maintained **43/43 PASS** (run_tests.sh). README battery baseline
+  updated to 10/11; gaps tracker updated.

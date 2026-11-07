@@ -113,24 +113,21 @@ Real online-training challenges (2026-11-05/06) — resolved gaps
   / long-key cipher uncrackable from 271 chars by statistics. Needs the key
   text or a non-standard scheme. TODO: identify the scheme/key.
 
-RSA battery (rsa_battery.py) — 2026-11-07, 9/11 solved
+RSA battery (rsa_battery.py) — 2026-11-07, 10/11 solved
 ------------------------------------------------------
-Automated battery of 11 raw RSA attack classes; autocrypt solves 9. The two
-unsolved classes both require lattice (LLL/Coppersmith) machinery that the
-solver does not implement yet:
+Automated battery of 11 raw RSA attack classes; autocrypt solves 10. The one
+remaining unsolved class is a generator/parameter issue, not a pure solver gap.
 
-* boneh_durfee — d ≈ N^0.30 (230-bit d, 768-bit n). Beyond Wiener (N^0.25);
+* boneh_durfee — d ≈ N^0.30 (230-bit d, 768-bit n). Beyond Wiener;N^0.25);
   also ABOVE Boneh–Durfee's theoretical bound (N^0.292), so a textbook BD
-  lattice would not be guaranteed to recover this instance. Needs an actual
-  LLL/Boneh–Durfee implementation AND generator parameters within the bound
-  (d ≲ N^0.28) to be a fair, solvable case.
-* partial_p — Coppersmith partial-key exposure: top 352/512 bits of p known.
-  x = p mod 2^160 is within Coppersmith's bound (x < N^0.25 ≈ 2^192), so it
-  IS solvable in principle via a univariate Coppersmith/LLL attack over the
-  divisor p of n. Needs an LLL-based small-root routine; no solver currently
-  provides one.
+  lattice would not be guaranteed to recover this instance. To clear it, the
+  generator's d must be lowered to d ≲ N^0.28 (within the BD bound) and then a
+  proper Boneh–Durfee lattice implemented.
+* partial_p — RESOLVED (2026-11-07) via a new LLL/Coppersmith solver
+  (`lattice.py` + `czroots.py`). Recovers p from the top 352/512 bits in
+  <1s on the 1024-bit battery case (method `RSA partial-p (Coppersmith)`).
 
-Both are tracked as open gaps until a lattice (LLL) module ships.
+Only boneh_durfee remains open under the battery's current parameters.
 
 Process note
 ------------

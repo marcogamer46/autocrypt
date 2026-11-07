@@ -2178,7 +2178,7 @@ def _rsa_values(data, ctx):
         try:
             text = data.decode("ascii", "ignore")
             for key, value in re.findall(
-                r"\b(n\d*|modulus\d*|e\d*|exponent\d*|c\d*|ciphertext\d*|cyphertext\d*|cypher\d*|cipher\d*|ct\d*|enc\d*|encrypted\d*|message\d*|msg\d*|p\d*|q\d*)\s*[:=]?\s*(0x[0-9a-f]+|\d+)",
+                r"\b(n\d*|modulus\d*|e\d*|exponent\d*|c\d*|ciphertext\d*|cyphertext\d*|cypher\d*|cipher\d*|ct\d*|enc\d*|encrypted\d*|message\d*|msg\d*|p\d*|q\d*|p_high|p_hi|phigh)\s*[:=]?\s*(0x[0-9a-f]+|\d+)",
                 text, re.I,
             ):
                 values.setdefault(key.lower(), value)
@@ -2198,6 +2198,13 @@ def _rsa_values(data, ctx):
                 except (ValueError, TypeError):
                     pass
     normalized.update({k: v for k, v in values.items() if re.fullmatch(r"(?:n|e|c|p|q)\d*", k)})
+    # Partial factorization hint: high bits of a prime factor (Coppersmith).
+    if "p_high" in values or "p_hi" in values:
+        try:
+            normalized["p_high"] = _parse_int(
+                values.get("p_high", values.get("p_hi")))
+        except (ValueError, TypeError):
+            pass
     for key, value in list(normalized.items()):
         if isinstance(value, str):
             try:
@@ -2455,6 +2462,43 @@ def _wiener(n, e):
     return None
 
 
+def _recover_p_partial(n, p_high, ctx):
+    """Recover a prime factor p of n when the high bits of p are known.
+
+    p = (p_high << m) + x with 0 <= x < 2^m. Coppersmith's method (see
+    lattice.py) recovers x; the unknown low-bit count m is inferred from the
+    assumption that p ~ sqrt(n), with a few neighbours tried for safety.
+    """
+    if n <= 1 or not p_high or p_high >= n:
+        return None
+    try:
+        import lattice
+    except Exception:
+        return None
+    total = (n.bit_length() + 1) // 2
+    base_m = total - p_high.bit_length()
+    if base_m < 1:
+        base_m = 1
+    # Try the inferred m first (it is the true low-bit count for balanced
+    # RSA), then the neighbours ordered by distance. Testing a wrong m can
+    # cost a full lattice reduction, so the likely-must come first.
+    candidates = [base_m]
+    for d in range(1, 10):
+        if base_m + d < n.bit_length():
+            candidates.append(base_m + d)
+        if base_m - d >= 1:
+            candidates.append(base_m - d)
+    for m in candidates:
+        if m >= n.bit_length():
+            continue
+        if not ctx.expired():
+            p = lattice.coppersmith_partial_p(
+                n, p_high, m, check=lambda: not ctx.expired())
+            if p is not None and 1 < p < n and n % p == 0:
+                return p
+    return None
+
+
 def _crt(residues, moduli):
     product = math.prod(moduli)
     total = 0
@@ -2549,6 +2593,21 @@ def solve_rsa(data, ctx):
                 m = pow(c, d, n)
                 yield from _emit(ctx, _int_plain(m), "RSA Wiener attack",
                                  {"n": n, "e": e, "d": d, "m": m})
+            # Partial factorization: the high bits of p are known (Coppersmith).
+            ph = vals.get("p_high")
+            if ph and not vals.get("p") and not vals.get("q"):
+                pp = _recover_p_partial(n, ph, ctx)
+                if pp:
+                    qq = n // pp
+                    phi = (pp - 1) * (qq - 1)
+                    dd = _inv(e, phi)
+                    if dd is not None:
+                        mm = pow(c, dd, n)
+                        yield from _emit_rsa(
+                            ctx, mm, "RSA partial-p (Coppersmith)",
+                            {"n": n, "e": e, "p": pp, "q": qq,
+                             "d": dd, "m": mm})
+                        return
             factors = _factor(n, ctx)
             if factors:
                 p, q = factors

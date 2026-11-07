@@ -274,3 +274,27 @@ Final verification: run_tests 43/43, matrix 22/22, fuzz 12/12, multijob 38/38, f
 - Note: the native auto-solver has no QS/GNFS path; >192-bit semiprimes remain external-only (documented).
 
 Final verification: e5 solved; run_tests 43/43 baseline unchanged (no solver code changed this session).
+
+## Session 21 (2026-11-07) — RSA battery (9/11) + Coppersmith partial-p
+
+| Step | What changed | Files | Verified |
+|------|--------------|-------|----------|
+| S21.1 | Fixed `smooth_prime()` unbounded-retry hang in the RSA battery (random small-prime multiply never found `v+1` prime exactly on-size); replaced with bounded exponent-vector search. | rsa_battery.py | 200-bit smooth prime found in ~0s, p−1 fully smooth |
+| S21.2 | Promoted `_rsa_battery.py` → `rsa_battery.py` as a tracked regression harness; documented in README tests. | rsa_battery.py, README.md | run: 9/11 solved |
+| S21.3 | Recorded the two lattice gaps (boneh_durfee, partial_p) with root causes. | things_it_cant_solve.txt | — |
+| S21.4 | New `lattice.py`: LLL reduction + Coppersmith (univariate, high-bits-of-p). Fixed a `num/den` float-division bug (should be `Fraction(num,den)`); made LLL incremental. | lattice.py | synthetic p recoveries; LLL conditions hold |
+| S21.5 | `_rsa_values` parses `p_high`/`p_hi`; `solve_rsa` added `RSA partial-p (Coppersmith)` branch + `_recover_p_partial` helper. | solvers.py | py_compile OK; end-to-end battery pending |
+
+Status: awaiting lattice-size sweep for the 1024-bit `partial_p` battery case
+(goal: recovery within the 25 s per-case budget); then full battery + 43/43
+regression re-run.
+
+## Session 22 (2026-11-07) — partial_p solved via LLL/Coppersmith (10/11)
+
+| Step | What changed | Files | Verified |
+|------|--------------|-------|----------|
+| S22.1 | Replaced the CRT-based polynomial root finder (which dropped the true residue under its 512-candidate cap) with Cantor–Zassenhaus root-finding mod a single large prime; handles huge coefficients without factoring. | czroots.py (new), lattice.py | recovery roots in random 5000-bit-coeff polys (T1/T2); Coppersmith mid-scale (128/192/256-bit) recovers |
+| S22.2 | Swapped `Fraction` GSO for `gmpy2.mpq` in LLL (5x faster, same output). | lattice.py | 8x9 4000-bit random lattice: frac 117.8s vs mpq 22.9s, identical result |
+| S22.3 | `coppersmith_partial_p` default `mm=3,tt=1`, dim-escalation ladder; real 1024-bit partial_p recovers in <1s (8/8 seeds). | lattice.py | real case rec=True (0.7s) |
+| S22.4 | `_recover_p_partial` tries inferred m first (was ascending from m-9 → ~19 wasted lattice runs → timeout). | solvers.py | solve_rsa on partial_p fixture: 0.69s → `academy{rsa_partial_p}` |
+| S22.5 | Full battery + regression. | — | battery **10/11** (partial_p PASS); run_tests **43/43 PASS** |
