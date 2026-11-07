@@ -383,3 +383,14 @@ Note (measured, not fixed): the randomized `test_blind{1..4}` suites are timing-
 
 Remaining open from the "things it can't solve 2" batch (honest non-solves): the 22-number numeric message (no reversible dictionary/linear/ASCII/mod mapping yields readable text — ambiguous), the Vigenère/cipher pair (identical 43-byte ciphertext, unknown key, no crib), and `rot13.txt` (ROT13 transform is correct but output is non-dictionary junk — likely an intentionally random flag or extra unprovided layer). These are added to `things_it_cant_solve.txt`.
 
+## Session 31 (2026-11-07/08) — transposition-trial + rot13 academy recovery
+
+| Step | What changed | Files | Verified |
+|------|--------------|-------|----------|
+| S31.1 | New `block-transposition` solver: guesses every block size b=2..6 and every index-permutation, refolding a short message into b-sized chunks. This recovers PicoCTF's "transposition-trial" cipher (blocks of 3, order [3,1,2]). Candidates ranked by prose/leet-aware English; only genuine recoveries (clear prose, an `academy`/`picoctf` wrapper, or "the flag") are promoted to `cracked block transposition`. | solvers.py | `message (6213)` → `academy{7R4N5P051N6_15_3XP3N51V3_C1CBA2A2}` at rank 0 |
+| S31.2 | `solve_rot13` now (after ROT13) extracts a recognized flag wrapper (`academy{…}` etc.) that appears (possibly behind stray padding) and surfaces it as `cracked ROT13` when its leet body improves on the input. This resolves `rot13.txt`: ROT13 gives `phygvevfacademy{…}`, the wrapper tail is ROT13("academy"), body leet-decodes to `CTRLF_SAVES_TIME`. | solvers.py | `rot13.txt` → `academy{C7r1F_54V35_71M3}` at rank 0 |
+| S31.3 | Perf guard: the block-transposition variant scan covers only flag-shaped or short (≤90 char) inputs — long non-flag ascii text is skipped, preventing a regression in the matrix/families wall-times. | solvers.py | matrix/families still pass |
+| S31.4 | New regressions `test_transposition_trial.py` and `test_rot13_academy.py` exercise both recoveries end-to-end at rank 0. | two new test files | both PASS |
+| S31.5 | `cipher.txt` / `Vigenère cipher.txt`: the read.md hint is "Add atbash cypher"; exhaustive Vigenère/Beaufort/autokey dictionary search found no key yielding a known prefix + readable body. Atbash is the only fully-specified step; its output is non-readable (random plaintext) so it is NOT claimed as a confirmed flag. Documented as underdetermined. | — | honest non-solve, documented |
+| S31.6 | Numeric `message (6)` / `message (.`: exhaustive search (mod-26/27/36/52/95/128/256, ASCII offsets, affine-with-position, base-k splits, ranks, differences, XOR/Vigenere running keys, polynomial interpolation) yields no readable "academy{...}". All numbers distinct while the expected plaintext repeats 'a' ⇒ mapping is stateful/not 1:1; unrecoverable without a key. Documented as underdetermined. | — | honest non-solve, documented |
+

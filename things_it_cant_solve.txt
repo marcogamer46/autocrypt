@@ -12,20 +12,34 @@ Batch "things it can't solve 2" (2026-11-07) — status
 * Rail fence cipher .txt: RESOLVED → rank 1 "The flag is: WH3R3_D035_7H3_F3NC3
   _8361N_4ND_3ND_43BBCEC4" (rails=4, conf 0.95).
 * message (6).txt / message (.txt — 22 numbers `239 396 131 …`: STILL OPEN.
-  No reversible mapping found (ASCII mod-26/27/36/52/95/128/256, digit-sum,
-  pairwise diffs, integer division, 2-byte/hex/binary concatenation, polynomial
-  interpolation all yield junk or ill-formed bytes). Likely requires an external
-  key/context; ambiguous.
-* Vigenère cipher.txt / cipher.txt (identical content): STILL OPEN. 43-byte
-  flag-shaped ciphertext with unknown key and no crib; every Caesar/affine/
-  atbash/ROT13/base36/Vigenere(common keys) decode scores ~0 (junk). Genuinely
-  underdetermined without a key hint.
-* rot13.txt: STILL OPEN. ROT13 transform is correct but the decoded output
-  `phygrvfnapqrzl{C7r1F_54V35_71M3}` is non-dictionary (likely a random flag or
-  an additional unprovided layer). No statistical solver can confirm it.
-* message (6213.txt: STILL OPEN. Transposition-like text
-  `heTfl g as icaaemd{7y4NRP051N5_16_35P3X51N3_V1CCA2B2}A`; rail/scytale/columnar
-  transforms and affine/leet probes do not yield a clean English flag.
+  Exhaustive algorithmic cryptanalysis anchored on the expected "academy{"
+  prefix (A1Z26/mod-26/27/36/52/95/128/256, ASCII offsets, affine-additive with
+  position over mod 256/95/26, base-k splits, digit sums, ranks, differences,
+  XOR/Vigenere running keys, polynomial interpolation, digit-stream bytes)
+  produced no readable "academy{...}" body. Structural blocker: every number is
+  distinct yet the expected plaintext repeats 'a' (positions 0/2), so the
+  mapping cannot be position-independent — the cipher must be stateful
+  (stream/OTP-like) or a multi-char-per-number scheme; no key is recoverable
+  from the sequence alone. Documented as underdetermined without a key/context.
+* Vigenère cipher.txt / cipher.txt (identical content): STILL OPEN but the
+  hint in read.md ("Add atbash cypher") and exhaustive Vigenère/Beaufort/
+  autokey dictionary-key search (364k keys + all short keys across 8 transform
+  orders) found no key decrypting the wrapper to a known prefix with a readable
+  body. The fully-specified deterministic step is atbash; its output
+  `xzowuld{L0MF_DJ3_T1T3L3G3_Z1ZS3H_4x372077}` is not readable (random
+  plaintext) and its wrapper is not a known flag prefix, so autocrypt does NOT
+  claim it as a confirmed flag. Genuinely underdetermined without a key hint.
+* rot13.txt: RESOLVED. ROT13 is correct: `cultirisnpnqrzl{P7e1S_54I35_71Z3}`
+  → `phygvevfacademy{C7r1F_54V35_71M3}`; the wrapper tail "npnqrzl" =
+  ROT13("academy") (leading "phygvevf" is padding), body leet-decodes to
+  `CTRLF_SAVES_TIME`. autocrypt now surfaces `academy{C7r1F_54V35_71M3}` at
+  rank 0 via the new `cracked ROT13` path (test_rot13_academy.py).
+* message (6213.txt: RESOLVED. This is PicoCTF's "transposition-trial" block
+  cipher: split into 3-char blocks and reorder [1,2,3]→[3,1,2].
+  `heTfl g as icaaemd{7y4NRP051N5_16_35P3X51N3_V1CCA2B2}A` → "The flag is
+  academy{7R4N5P051N6_15_3XP3N51V3_C1CBA2A2}". New generic `block-transposition`
+  solver (block sizes 2–6 × all permutations, prose/leet-ranked) recovered it at
+  rank 0 (test_transposition_trial.py).
 
 This file tracks inputs/challenges the auto-solver does not yet solve to a
 rank-#0 flag recovery. When a case starts passing, move it to LOGS.md's
