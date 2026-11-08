@@ -9,6 +9,31 @@ INSTALL_ROOT="${AUTOCRYPT_HOME:-$HOME/.autocrypt}"
 VENV_DIR="$INSTALL_ROOT/venv"
 CFG="$VENV_DIR/autocrypt.json"
 
+# ---------------------------------------------------------------------------
+# 0. Resolve a real Python first (prefer explicit override, then python3, then
+# python). Do this BEFORE any clone: a machine without Python >=3.12 should
+# fail fast with a clear message rather than half-install (clone but no venv).
+# ---------------------------------------------------------------------------
+PY=""
+for cand in "${AUTOCRYPT_PYTHON:-}" python3 python; do
+  if [ -n "$cand" ] && command -v "$cand" >/dev/null 2>&1; then
+    PY="$cand"
+    break
+  fi
+done
+if [ -z "$PY" ]; then
+  echo "error: no python3/python found on PATH. Install Python 3.12+." >&2
+  exit 1
+fi
+
+# Require Python >= 3.12 (the project does too).
+ver="$("$PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+major="${ver%%.*}"; minor="${ver#*.}"; minor="${minor%%.*}"
+if [ "$major" -lt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -lt 12 ]; }; then
+  echo "error: autocrypt needs Python >=3.12 (found $ver)." >&2
+  exit 1
+fi
+
 # If this script was downloaded standalone (curl ... | bash), there is no repo
 # next to it — clone the source into the install root first.
 if [ ! -f "$REPO_DIR/pyproject.toml" ]; then
@@ -35,29 +60,6 @@ fi
 echo "==> autocrypt installer"
 echo "    repo : $REPO_DIR"
 echo "    home : $INSTALL_ROOT"
-
-# ---------------------------------------------------------------------------
-# 1. Resolve a real Python (prefer explicit override, then python3, then python)
-# ---------------------------------------------------------------------------
-PY=""
-for cand in "${AUTOCRYPT_PYTHON:-}" python3 python; do
-  if [ -n "$cand" ] && command -v "$cand" >/dev/null 2>&1; then
-    PY="$cand"
-    break
-  fi
-done
-if [ -z "$PY" ]; then
-  echo "error: no python3/python found on PATH. Install Python 3.12+." >&2
-  exit 1
-fi
-
-# Require Python >= 3.12 (the project does too).
-ver="$("$PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
-major="${ver%%.*}"; minor="${ver#*.}"; minor="${minor%%.*}"
-if [ "$major" -lt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -lt 12 ]; }; then
-  echo "error: autocrypt needs Python >=3.12 (found $ver)." >&2
-  exit 1
-fi
 
 # ---------------------------------------------------------------------------
 # 2. Create the venv (once) and install the package from the local repo

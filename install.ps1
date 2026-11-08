@@ -18,6 +18,55 @@ $VenvPy = Join-Path $VenvDir 'Scripts\python.exe'
 $Bin     = Join-Path $VenvDir 'Scripts'
 $Cfg     = Join-Path $VenvDir 'autocrypt.json'
 
+# --- 0. Resolve a real Python first (skip the broken Microsoft Store aliases).
+# Do this BEFORE any clone: a machine without Python >=3.12 should fail fast
+# with a clear message rather than half-install (clone but no venv) and leave
+# the user with a silently-missing "autocrypt" command.
+function Get-RealPython($repoDir) {
+  $cands = New-Object System.Collections.ArrayList
+  if ($env:AUTOCRYPT_PYTHON) { [void]$cands.Add($env:AUTOCRYPT_PYTHON) }
+  # PATH lookups, dropping the "Run as alias" Store stubs under WindowsApps.
+  foreach ($name in @('python', 'python3', 'py')) {
+    $cmd = Get-Command $name -ErrorAction SilentlyContinue
+    if ($cmd -and $cmd.Source -and $cmd.Source -notlike '*WindowsApps*') {
+      [void]$cands.Add($cmd.Source)
+    }
+  }
+  # Common official-installer locations.
+  foreach ($p in @(
+      (Join-Path $env:LOCALAPPDATA 'Programs\Python'),
+      (Join-Path $HOME 'AppData\Local\Programs\Python'))
+  ) {
+    if (Test-Path $p) {
+      Get-ChildItem $p -Filter python.exe -Recurse -ErrorAction SilentlyContinue |
+        ForEach-Object { [void]$cands.Add($_.FullName) }
+    }
+  }
+  # Last resort: the repo's own dev venv, if it exists.
+  $repoVenv = Join-Path $repoDir '.venv\Scripts\python.exe'
+  if (Test-Path $repoVenv) { [void]$cands.Add($repoVenv) }
+
+  # Walk candidates in priority order; return the first that both exists AND
+  # actually meets the Python >=3.12 gate (in case an old build appears earlier).
+  foreach ($c in $cands) {
+    if (-not ($c -and (Test-Path $c))) { continue }
+    $v = & $c -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
+    if ($LASTEXITCODE -ne 0) { continue }
+    $p2 = $v.Split('.')
+    if ([int]$p2[0] -gt 3 -or ([int]$p2[0] -eq 3 -and [int]$p2[1] -ge 12)) {
+      return $c
+    }
+  }
+  return $null
+}
+
+$py = Get-RealPython $RepoDir
+if (-not $py) {
+  Write-Host "error: no Python >=3.12 found (Microsoft Store alias or old version detected)." -ForegroundColor Red
+  Write-Host "       Install Python 3.12+ from https://www.python.org/downloads/ and re-run." -ForegroundColor Red
+  exit 1
+}
+
 # If this script was downloaded standalone (irm ... | iex), there is no repo
 # next to it — clone the source into the install root first.
 if (-not (Test-Path (Join-Path $RepoDir 'pyproject.toml'))) {
@@ -45,53 +94,6 @@ if (-not (Test-Path (Join-Path $RepoDir 'pyproject.toml'))) {
 Write-Host "==> autocrypt installer"
 Write-Host "    repo : $RepoDir"
 Write-Host "    home : $InstallRoot"
-
-# --- 1. Resolve a real Python (skip the broken Microsoft Store aliases) ------
-# Returns a candidate path whose version is >= 3.12, or $null if none qualify.
-function Get-RealPython($repoDir) {
-  $cands = New-Object System.Collections.ArrayList
-  if ($env:AUTOCRYPT_PYTHON) { [void]$cands.Add($env:AUTOCRYPT_PYTHON) }
-  # PATH lookups, dropping the "Run as alias" Store stubs under WindowsApps.
-  foreach ($name in @('python', 'python3', 'py')) {
-    $cmd = Get-Command $name -ErrorAction SilentlyContinue
-    if ($cmd -and $cmd.Source -and $cmd.Source -notlike '*WindowsApps*') {
-      [void]$cands.Add($cmd.Source)
-    }
-  }
-  # Common official-installer locations.
-  foreach ($p in @(
-      (Join-Path $env:LOCALAPPDATA 'Programs\Python'),
-      (Join-Path $HOME 'AppData\Local\Programs\Python'))
-  ) {
-    if (Test-Path $p) {
-      Get-ChildItem $p -Filter python.exe -Recurse -ErrorAction SilentlyContinue |
-        ForEach-Object { [void]$cands.Add($_.FullName) }
-    }
-  }
-  # Last resort: the repo's own dev venv, if it exists.
-  $repoVenv = Join-Path $repoDir '.venv\Scripts\python.exe'
-  if (Test-Path $repoVenv) { [void]$cands.Add($repoVenv) }
-
-  # Walk candidates in priority order; return the first that both exists AND
-  # actually meets the Python >=3.12 gate (agar old build appears earlier).
-  foreach ($c in $cands) {
-    if (-not ($c -and (Test-Path $c))) { continue }
-    $v = & $c -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
-    if ($LASTEXITCODE -ne 0) { continue }
-    $p2 = $v.Split('.')
-    if ([int]$p2[0] -gt 3 -or ([int]$p2[0] -eq 3 -and [int]$p2[1] -ge 12)) {
-      return $c
-    }
-  }
-  return $null
-}
-
-$py = Get-RealPython $RepoDir
-if (-not $py) {
-  Write-Host "error: no Python >=3.12 found (Microsoft Store alias or old version detected)." -ForegroundColor Red
-  Write-Host "       Install Python 3.12+ from https://www.python.org/downloads/ and re-run." -ForegroundColor Red
-  exit 1
-}
 
 # --- 2. Create venv (once) and install from the local repo -------------------
 if (-not (Test-Path $VenvPy)) {

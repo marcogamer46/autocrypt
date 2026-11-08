@@ -495,3 +495,21 @@ Linux installers so `autocrypt` is a global command, and add
 | S38.10 | **Full suite verification** post-fix: `run_tests.sh` 43/43 PASS; all standalone `tests/test_*.py` re-run (see below). | — | 43/43 + standalone suite |
 
 | S38.11 | **Adversarial review fixes** (ultracode workflow, 24 agents): confirmed 7 findings and fixed all. (1) Updateers: `do_update()` no longer treats any ancestor `.git` as a checkout — it consults the installer config and pip metadata first (mis-dispatch fix); editable/unknown-source no-update path now returns exit 1, not 0; Windows `file://` URL parsing via `urllib.request.url2pathname` (was `Path(url[8:])` → bogus `\C:\...`). (2) Installers: `git pull --ff-only` failures are now fatal (were swallowed with `|| true` / missing `$LASTEXITCODE`), so a diverged clone can't silently install stale code; `install.sh` now writes `autocrypt.json` via Python's `json.dump` (was raw `printf`, producing invalid JSON for paths with quotes/backslashes); PS1 `Get-RealPython` now picks the first candidate that actually meets the Python ≥3.12 gate instead of returning the first existing path then failing. (3) CLI: added a real `--version` flag (README documented it but it didn't exist). | updater.py, cli.py, install.sh, install.ps1 | stand: suite 33/34 (only BKLG-22), 43-case table re-run |
+
+### Session 39 (2026-11-08) — "autocrypt: command not found" after install
+
+- S39.1 User reported `autocrypt` command not found after running the installer on a
+  fresh machine. Diagnosis: the machine has **no real Python ≥3.12** — the only
+  `python`/`python3` on PATH are Microsoft Store alias stubs (they print "Python
+  was not found…"). The installer cloned the source into `~/.autocrypt/src` but
+  then hit the Python gate and exited **before** creating a venv, leaving no
+  `autocrypt` command.
+- S39.2 Completed the install using the machine's only real Python (the dev
+  repo's `.venv`, 3.12.16) via `AUTOCRYPT_PYTHON` override. `autocrypt` now
+  works: `--version` → 0.1.0, `--help` OK, and it solves the bundled sample
+  (`academy{dh_s3cr3t_913ddd75}`). Scripts dir added to User PATH (persistent).
+- S39.3 **Installer UX fix**: both installers now resolve/validate Python
+  **before** cloning, so a machine without Python ≥3.12 fails fast with a clear,
+  actionable message instead of half-installing (clone but no venv) and leaving a
+  silently-missing command. Verified: on a Python-less PATH the installer prints
+  "error: no Python >=3.12 found …" and exits 1 before any clone.

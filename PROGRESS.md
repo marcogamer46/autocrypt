@@ -44,6 +44,11 @@ Done:
 - **Pushed**: commit `a5f186b` on `origin/main`. One-liner installer URLs live
   (HTTP 200): `raw.githubusercontent.com/marcogamer46/autocrypt/main/install.sh`
   and `install.ps1`, plus `README.md`.
+- **Session 39 (installer "command not found" fix)**: diagnosed as *no real
+  Python ≥3.12 on the machine* (only Microsoft Store alias stubs); completed
+  the install via the `AUTOCRYPT_PYTHON` override so `autocrypt` works. Both
+  installers now validate Python **before** cloning (fail-fast with a clear
+  error instead of a silent half-install). See LOGS Session 39.
 
 ## Previous note (reviewer-feedback round) — COMPLETE
 
