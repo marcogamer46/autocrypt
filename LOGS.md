@@ -513,3 +513,12 @@ Linux installers so `autocrypt` is a global command, and add
   actionable message instead of half-installing (clone but no venv) and leaving a
   silently-missing command. Verified: on a Python-less PATH the installer prints
   "error: no Python >=3.12 found …" and exits 1 before any clone.
+
+- S39.4 User on EndeavourOS (Python 3.14.8) reached a working install, but
+  `autocrypt --update` crashed with `AttributeError: 'CompletedProcess' object
+  has no attribute 'std'` in `updater._update_git`. The code used `.std`
+  instead of `.stdout` (a CompletedProcess has `.stdout`). This was missed
+  because the dirty-tree guard returns before those lines, so the earlier test
+  only exercised the refusal path. Fixed both `.std` → `.stdout` and added a
+  real regression test (`tests/test_updater.py`) that performs an actual
+  fast-forward pull against a local bare remote + clones — it now advances HEAD.
