@@ -457,3 +457,15 @@ Addressed an external reviewer's three points: (1) fixture circularity, (2) a
 | S36.4 | **Explainability**: wrote `docs/SCORING.md` (evidence model: assess() weights, flag-plausibility leet mapping, trust tiers, determinism) and `docs/SOLVERS.md` (146-solver catalog with module map and family index). | docs/ | reviewed against source |
 | S36.5 | **Honest benchmark** (delegated subagent): `real_challenges/BENCHMARK.md` compares autocrypt vs RsaCtfTool (git-installed into `.venv_bench/`) vs Ciphey (N/A — `cipheycore` wheel capped at CPython 3.9). Added new real challenges substitution0/1/2, rail-fence (picoCTF 2023/2022). Findings: autocrypt wins small-e RSA (incl. Mini_RSA's c+i·n twist RsaCtfTool misses) and all three monoalphabetic substitutions; loses on rail-fence, Sum-O-Primes (p+q leak unused), and Very_Smooth p−1 did not reproduce. Caveats logged honestly. | real_challenges/BENCHMARK.md, real_challenges/{substitution0,substitution1,substitution2,rail-fence}/ | see BENCHMARK.md |
 | S36.6 | **No regressions**: `run_tests.sh` 43/43 PASS post-restructure; full `tests/` suite green (an early background-run hexfamily idx=9 dip was a CPU-contention flake under the concurrent benchmark installs — clean 10/10 on re-run). | — | run_tests 43/43 |
+
+### Session 37 (2026-11-08) — round 2: verify green + push
+- S37.1 Run_tests.sh was failing uniformly (43 ERR) because it invoked bare
+  `python3` (Microsoft Store alias on this host). Fixed to prefer the project
+  venv (`.venv/Scripts/python.exe`), falling back to python3. Suite now
+  43/43 PASS.
+- S37.2 Verif all moved `tests/` files under a settled environment: blind2
+  24/25, matrix OK, families_turn 40/40 FP 0, rest OK. `test_flaws2` exits 1
+  only because it documents the 18 pre-existing p−1/p+1 limitations (see
+  BKLG-22) — not a regression (it crashed at HEAD).
+- S37.3 Committed restructure+benchmark+docs as `582e823`; pushed to
+  origin/main. AUTO_MODE.md Last activity updated.

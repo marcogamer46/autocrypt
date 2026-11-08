@@ -25,10 +25,12 @@ next, and it records what has been done so work never repeats.
 - Keep LOGS.md and things_it_cant_solve.txt truthful and current.
 
 ## Last activity
-2026-11-08: reviewer-feedback round — repo restructure (tests/ dir, tools
-archived, LICENSE, pyproject.toml, docs/ explainability), honest real-challenge
-benchmark vs RsaCtfTool/Ciphey (real_challenges/BENCHMARK.md). Commit 97c0cad
-prior; this round pending commit.
+2026-11-08: reviewer-feedback round complete — repo restructure (tests/ dir,
+tools archived, LICENSE, pyproject.toml, docs/ explainability), honest
+real-challenge benchmark vs RsaCtfTool/Ciphey (real_challenges/BENCHMARK.md).
+Also fixed run_tests.sh to use the venv interpreter (bare `python3` is a
+broken Microsoft Store alias on this host) — full suite 43/43 PASS. Commit
+582e823 pushed to origin/main.
 
 ## Current task
 (empty)
