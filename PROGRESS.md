@@ -2,16 +2,23 @@
 
 ## where we are (2026-11-08, ultracode continuation) — COMPLETE
 
-Resume work is done and committed: BKLG-12 (multijob 36/36), BKLG-15
-(--json stderr fix), BKLG-16 (pre-existing core.py `match_text` UnboundLocalError
-fix — the sole cause of 7 run_tests ERRs; run_tests 35/43 → 43/43), and
-BKLG-17 (generic EC-DLP solver + widened DLP matcher). Full serial suite
-passes; blind3/blind4 25/25 when run serially (parallel-run dips were CPU-
-contention flakes, not regressions). See LOGS.md Session 35.
+Reviewer-feedback round (structure + honest benchmark) is done. Repo
+restructure: all 34 `test_*.py` moved into `tests/` (git mv + path-bootstrap
+rewrites), standalone dev/diag tools moved to `archive_scratch/tools_dev/`,
+added LICENSE (MIT), `pyproject.toml`, `docs/SCORING.md`, `docs/SOLVERS.md`
+(146-solver catalog), and updated `run_tests.sh` + README paths. Verified
+`run_tests.sh` 43/43 PASS and the moved `tests/` suite green.
+Honest benchmark (`real_challenges/BENCHMARK.md`): autocrypt vs RsaCtfTool
+(git-installed) vs Ciphey (N/A — cipheycore wheel capped at CPython 3.9).
+New real challenges added: substitution0/1/2, rail-fence (picoCTF 2023/2022).
+autocrypt wins small-e RSA (incl. Mini_RSA's c+i·n twist RsaCtfTool misses)
+and all three monoalphabetic substitutions; loses on rail-fence and
+Sum-O-Primes (p+q leak unused); Very_Smooth p−1 README claim did not reproduce
+(report it as a backlog verification item, BKLG-21).
 
-Next recommended step: verify the EC/DLP solvers against truly held-out
-challenges (the early_real_challenges/ dir) and consider a worktree-isolated
-stress run to re-confirm j=1 vs j=4 determinism under heavy load.
+Backlog now: BKLG-18 (fill Ciphey gap on Python ≤3.9), BKLG-19 (rail-fence
+miss), BKLG-20 (Sum-O-Primes not consuming x=p+q), BKLG-21 (verify/correct
+Very_Smooth p−1 claim). See AUTO_MODE.md.
 
 ## Done
 - R1-R6 (real online CTF challenges, 2026-11-05): curated 3 real picoCTF crypto challenges (miniRSA single-file e=3, Many Prime multi-file 4-prime RSA, rotation single-file ROT) into `real_challenges/`. Found and fixed 3 real bugs: (1) challenge.py hint extraction dropped multi-prime primes (p1..p4) so RSA tried to factor 372-bit composites — now emits `pN=`/`qN=` hints; (2) `solve_rsa_extra` given-primes short-circuit fell through to factor_all and burned the deadline (added `return`), and main `solve_rsa` (prior 0.99, runs first) starved the search by factoring under a 30s extension — ported the given-primes fast path into `solve_rsa` and extended `_rsa_values` regex to capture `p\d*|q\d*`; (3) labeled-line extraction didn't accept `0x` hex output, silently dropping n/c in multi-file hex challenges — now handles optional `0x`, New `test_rsamultiprimefamily.py` (10 cases, single-file + multi-file, decimal/hex) 10/10 rank #1 <0.5s; real multiprime pair added to `fixtures/multiprime_real/` + run_tests row. run_tests 41/41.

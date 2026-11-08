@@ -22,3 +22,14 @@ _download*
 # contain leaked-flag files (Easy_Peasy, unary_binary, ...) that must NOT be
 # committed; tracked challenge files under online_train/ remain tracked.
 /real_challenges/online_train/
+
+# Benchmark comparison venv (RsaCtfTool / Ciphey installs) is local-only.
+.venv_bench/
+
+# Runtime / watchdog / local scratch artifacts (not project source)
+.watchdog_heartbeat
+_shutdown_reminder.txt
+flaws.md
+newcases/
+archive_scratch/families_iso*.txt
+archive_scratch/sephex2.txt

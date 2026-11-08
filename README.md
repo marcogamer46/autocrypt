@@ -8,6 +8,15 @@ then ranks the surviving plaintext candidates.
 Built and tested for Python 3.12+ (stdlib only; optional crypto libs are never
 required and never executed).
 
+## Documentation
+
+- [`docs/SCORING.md`](docs/SCORING.md) — how candidate plaintexts are scored
+  and ranked (English evidence, flag-plausibility, trust tiers).
+- [`docs/SOLVERS.md`](docs/SOLVERS.md) — catalog of all 146 registered solvers,
+  with the module map and how priorities are set.
+- [`real_challenges/BENCHMARK.md`](real_challenges/BENCHMARK.md) — honest,
+  held-out benchmark of autocrypt vs RsaCtfTool/Ciphey on real CTF challenges.
+
 ## Design overview
 
 ### Pipeline
@@ -127,27 +136,35 @@ only in the source. Real curated challenges live under `real_challenges/` (see
 
 ## Tests (regression suites)
 
+All `test_*.py` suites live in `tests/` and are run from the repo root:
+
 ```
-bash run_tests.sh          # 40-case table (strict mode on), plus optional AES/Fernet SKIP rows
-python3 test_matrix.py --both     # 22/22 rows rank #1
-python3 fuzz.py                   # 12 malformed/random/unicode cases, no crashes
-python3 test_flagshape.py         # flag-shape gates
-python3 test_multijob.py          # 38/38: identical top-3 at -j1 vs -j4
-python3 test_hexfamily.py <seed> --matrix | --grid d12|d34
-python3 test_xorfamily.py         # L≥4 short-flag repeating-XOR family (7/10 accepted; known ambiguity)
-python3 test_blind3.py / test_blind4.py   # blind sets (seen-data regressions)
-python3 test_e3.py                # E3 realistic CTF pairs (strict harness)
-python3 test_e4.py                # challenge.py print-label extraction (10/10)
-python3 test_explain.py           # --explain (7/7)
-python3 test_e7.py                # --fast / --deep flags (4/4)
-python3 test_rsapqfamily.py / test_rsaexactfamily.py / test_families_turn.py
-python3 flakecheck.py <seed> --grid d34 [--contend]   # idle vs loaded determinism
-python3 rsa_battery.py           # 11 raw RSA attack classes (baseline 10/11)
+bash run_tests.sh                # 43-case table (strict mode on) + optional AES/Fernet SKIP rows
+python3 tests/test_matrix.py --both     # 22/22 rows rank #1
+python3 archive_scratch/tools_dev/fuzz.py  # 12 malformed/random/unicode cases, no crashes
+python3 tests/test_flagshape.py         # flag-shape gates
+python3 tests/test_multijob.py          # 38/38: identical top-3 at -j1 vs -j4
+python3 tests/test_hexfamily.py <seed> --matrix | --grid d12|d34
+python3 tests/test_xorfamily.py         # L≥4 short-flag repeating-XOR family (7/10 accepted; known ambiguity)
+python3 tests/test_blind3.py / test_blind4.py   # blind sets (seen-data regressions)
+python3 tests/test_e3.py                # E3 realistic CTF pairs (strict harness)
+python3 tests/test_e4.py                # challenge.py print-label extraction (10/10)
+python3 tests/test_explain.py           # --explain (7/7)
+python3 tests/test_e7.py                # --fast / --deep flags (4/4)
+python3 tests/test_rsapqfamily.py / test_rsaexactfamily.py / test_families_turn.py
+python3 archive_scratch/tools_dev/flakecheck.py <seed> --grid d34 [--contend]  # idle vs loaded determinism
+python3 archive_scratch/tools_dev/rsa_battery.py  # 11 raw RSA attack classes (baseline 10/11)
 ```
+
+Standalone diagnostics / dev tools (fuzz, flakecheck, rsa_battery, diag, …)
+live under `archive_scratch/tools_dev/` to keep the root clean.
 
 All fixtures under `fixtures/` are generated deterministically by
 `make_fixtures.py` (fixed seeds). Challenge pairs use synthetic flags marked as
 such; the flag is never shipped inside a pair (real challenges read `flag.txt`).
+Real, third-party CTF challenges — the honest benchmark — live under
+`real_challenges/`, with per-challenge run results in
+`real_challenges/BENCHMARK.md`.
 
 ## Known limits
 
