@@ -118,7 +118,6 @@ class Context:
     exact_time: float | None = None
     exact_chain: str = ""
     solver_times: dict = field(default_factory=dict)
-    grace: float = 1.0
     speed: float = 1.0      # <1 for --fast (shorter per-solver slices), >1 for --deep
     heavy_names: frozenset = frozenset()  # solver names to skip under --fast
 
@@ -513,13 +512,6 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
     import solvers  # noqa: F401
 
     heap: list[tuple[float, int, bytes, tuple[str, ...], float, int]] = []
-    import os as _os
-    try:
-        ctx.grace = float(_os.environ.get("G1B_GRACE", "1.0"))
-    except Exception:
-        ctx.grace = 1.0
-    global _search_t0
-    _search_t0 = time.monotonic()
     serial = 0
     heapq.heappush(heap, (-1.0, serial, data, (), 1.0, 0))
     visited = {hashlib.sha256(data).digest()}
@@ -1113,7 +1105,7 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                     # transposition recoveries may).
                     if not (is_flag or recovered or strong_recovery) and record["confidence"] >= .98:
                         record["confidence"] = .97
-                    # Verified exact recovery bookkeeping + grace-gated early exit.
+                    # Verified exact recovery bookkeeping.
                     # An "exact" recovery is a confirmed decrypt; a flag-shaped row
                     # that merely LOOKS like a flag (e.g. a wrong-key XOR output) is
                     # NOT verified.
@@ -1161,8 +1153,6 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                         ctx.exact_found = True
                         ctx.exact_time = time.monotonic()
                         ctx.exact_chain = record["chain"]
-                        if _exact_like_decode:
-                            ctx.grace = 0.0
                     # Short text is retained for explicit LOW CONFIDENCE reporting.
                     if (score >= .62 or flag_shaped or (letters < 20 and score >= .28) or
                             (recovered and not recovered_bad) or

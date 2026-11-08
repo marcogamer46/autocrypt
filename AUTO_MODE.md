@@ -42,8 +42,6 @@ work is code-quality (pool scheduling, tests, budget edges, CLI flags).
   (Windows-relative paths, seeding, monotonic clock). target: test_flaws2.py.
 - BKLG-09 [bugfix, low, p3] Honor `--no-color` in ui._color_on.
   target: autocrypt.py:164, ui.py:21.
-- BKLG-10 [cleanup, low, p3] Wire up or remove ctx.grace / G1B_GRACE
-  dead config. target: core.py:516-519,1148.
 - BKLG-11 [test, medium, p3] Add playfair + hill-2x2 + watcher regression tests.
   target: solvers.py, watcher.py.
 - BKLG-12 [test, high, p3] Harden/speed test_multijob.py (fewer subprocesses,
@@ -87,3 +85,10 @@ work is code-quality (pool scheduling, tests, budget edges, CLI flags).
   ui.COLOR_ENABLED module toggle (None=auto, False=off, True=on) consulted by
   _color_on(), and autocrypt.py sets it False when --no-color is passed.
   Added regression test test_no_color_flag_disables_ansi. ui_safety 5/5 pass.
+- BKLG-10 [2026-11-08] Removed dead `ctx.grace` / `G1B_GRACE` config: the
+  field and its three write sites (env parse at search() start, `=0.0` after
+  exact-like decode) had no reader, and `_search_t0` was likewise only ever
+  written. Removed the field, the env-parse block, the post-exact write, and
+  the now-empty `_search_t0` global, and fixed a duplicate `serial = 0`.
+  Verified: no dangling refs; e7 4/4, ui_safety, flagshape, substitution,
+  rot13 all pass.
