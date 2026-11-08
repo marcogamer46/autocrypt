@@ -827,6 +827,7 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                     authoritative = False  # fixed substitution on a flag-shaped input: rank top
                     strong_recovery = False  # transposition recovered the flag: rank above substitutions
                     decoder_unknown = False  # decoder output, flag-shaped, unknown prefix: rank, keep searching
+                    match_text = ""
                     if flag_match:
                         match_text = flag_match.group(0)
                         out_printable = sum(ch.isprintable() or ch in "\r\n\t" for ch in text) / max(1, len(text))

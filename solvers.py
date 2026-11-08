@@ -3682,12 +3682,26 @@ def _ph_dlp_prime(g, h, r, ctx):
     return None
 
 
-@solver("dlp-composite-smooth", lambda fp: .92 if fp["charset"] == "ascii-text" and re.search(
-    r"(?m)^\s*dlp_secret\s*=\s*1\s*$", fp.get("_text", "")) else (
-     .55 if fp["charset"] == "ascii-text" and
-     re.search(r"(?m)^\s*n\s*=\s*\d", fp.get("_text", "")) and
-     re.search(r"(?m)^\s*c\s*=\s*\d", fp.get("_text", "")) and
-     re.search(r"(?m)^\s*g\s*=\s*\d", fp.get("_text", "")) else 0.0))
+def _dlp_matcher(fp):
+    if fp["charset"] != "ascii-text":
+        return 0.0
+    _t = fp.get("_text", "")
+    if re.search(r"(?m)^\s*dlp_secret\s*=\s*1\s*$", _t):
+        return .92
+    has_n = re.search(r"(?m)^\s*n\s*=\s*[0-9a-fA-Fx_]", _t)
+    has_c = re.search(r"(?m)^\s*c\s*=\s*[0-9a-fA-Fx_]", _t)
+    has_g = re.search(r"(?m)^\s*g\s*=\s*[0-9a-fA-Fx_]", _t)
+    has_e = re.search(r"(?m)^\s*e\s*=\s*[0-9a-fA-Fx_]", _t)
+    if has_n and has_c and has_g:
+        return .55
+    # n+c without an explicit generator: still worth trying since the base can
+    # be hypothesised (commonly 2/3/5/7). Guard against RSA (n,c,e) triples.
+    if has_n and has_c and not has_e:
+        return .42
+    return 0.0
+
+
+@solver("dlp-composite-smooth", _dlp_matcher)
 def solve_dlp_composite_smooth(data, ctx):
     try:
         text = data.decode("ascii")
@@ -3746,6 +3760,148 @@ def solve_dlp_composite_smooth(data, ctx):
             if pr >= 0.85:
                 yield out, "Cracked DLP (smooth composite)", {"bits": n.bit_length()}, .99
                 return
+
+
+# -------------------------------------------------- Elliptic-curve DLP ----
+_EC_KEY_RE = re.compile(r"(?m)^\s*(p|a|b|gx|gy|qx|qy|n|h)\s*=\s*([0-9a-fA-Fx_]+)\s*$")
+_EC_BASE_RE = re.compile(r"(?m)^\s*(p|a|b)\s*=\s*([0-9a-fA-Fx_]+)\s*$")
+
+
+def _ec_parse_ints(text):
+    v = {}
+    for m in _EC_KEY_RE.finditer(text):
+        k, raw = m.group(1).lower(), m.group(2)
+        try:
+            num = int(raw, 16) if raw.lower().startswith("0x") else int(raw, 16)
+        except ValueError:
+            try:
+                num = int(raw, 10)
+            except ValueError:
+                continue
+        v[k] = num
+    return v
+
+
+def _ec_add(P, Q, p, a):
+    """Add two points on y^2 = x^3 + ax + b (mod p). None = point at infinity."""
+    if P is None:
+        return Q
+    if Q is None:
+        return P
+    x1, y1 = P
+    x2, y2 = Q
+    if x1 == x2 and (y1 + y2) % p == 0:
+        return None
+    if P == Q:
+        lam = (3 * x1 * x1 + a) * pow(2 * y1, -1, p) % p
+    else:
+        lam = (y2 - y1) * pow(x2 - x1, -1, p) % p
+    x3 = (lam * lam - x1 - x2) % p
+    y3 = (lam * (x1 - x3) - y1) % p
+    return (x3, y3)
+
+
+def _ec_mul(k, P, p, a):
+    R = None
+    while k:
+        if k & 1:
+            R = _ec_add(R, P, p, a)
+        P = _ec_add(P, P, p, a)
+        k >>= 1
+    return R
+
+
+def _ec_order(G, p, a, cap):
+    """Order of G by repeatedly doubling-free accumulation (cap-guarded)."""
+    P = G
+    order = 1
+    while P is not None and order <= cap:
+        P = _ec_add(P, G, p, a)
+        order += 1
+    return order if P is None else None
+
+
+def _ec_bsgs(G, Q, p, a, order):
+    """Baby-step giant-step: Q = k*G over subgroup of size `order`."""
+    m = math.isqrt(order) + 1
+    tbl = {}
+    cur = G
+    for j in range(m):
+        tbl.setdefault(cur, j)
+        cur = _ec_add(cur, G, p, a)
+    # f = Q - m*G ; precompute -m*G once
+    neg = _ec_mul(m, G, p, a)
+    if neg is not None:
+        neg = (neg[0], (-neg[1]) % p)
+    f = Q
+    for i in range(m + 1):
+        if f in tbl:
+            return (i * m + tbl[f]) % order
+        f = _ec_add(f, neg, p, a) if neg is not None else None
+        if f is None:
+            continue
+    return None
+
+
+@solver("elliptic-curve-dlog",
+        lambda fp: .62 if fp["charset"] == "ascii-text"
+        and re.search(r"(?m)^\s*gx\s*=", fp.get("_text", ""))
+        and re.search(r"(?m)^\s*qx\s*=", fp.get("_text", "")) else 0.0)
+def solve_ec_dlog(data, ctx):
+    """Recover the scalar k st Q = k*G on a (typically small) Weierstrass
+    curve given p,a,b and points G=(gx,gy), Q=(qx,qy). Generic: no hardcoded
+    flags — the group order is derived (or bounded) and BSGS/brute-force is
+    used over the small subgroup."""
+    try:
+        text = data.decode("ascii")
+    except Exception:
+        return
+    v = _ec_parse_ints(text)
+    p = v.get("p")
+    a = v.get("a", 0)
+    b = v.get("b", 0)
+    gx, gy = v.get("gx"), v.get("gy")
+    qx, qy = v.get("qx"), v.get("qy")
+    if not p or gx is None or gy is None or qx is None or qy is None:
+        return
+    if p < 3:
+        return
+    G = (gx, gy)
+    Q = (qx, qy)
+    # sanity: points on curve
+    if (gy * gy - (gx ** 3 + a * gx + b)) % p != 0:
+        return
+    if (qy * qy - (qx ** 3 + a * qx + b)) % p != 0:
+        return
+    # Bound the subgroup order via Hasse: p+1 ± 2√p; cap brute-force work.
+    hasse_hi = p + 1 + 2 * math.isqrt(p) + 2
+    order = v.get("n") or hasse_hi
+    if order > 5_000_000:
+        # too large for exhaustive/BSGS in-budget: bail unless small p
+        if p > 1_000_000:
+            return
+    if ctx.expired():
+        return
+    # Prefer BSGS when order is known/bounded.
+    if order < 5_000_000:
+        k = _ec_bsgs(G, Q, p, a, order)
+        if k is not None and _ec_mul(k, G, p, a) == Q:
+            out = str(k).encode("ascii")
+            yield out, "Elliptic-curve discrete log recovered",
+            {"bits": p.bit_length()}, .98
+            return
+    # Fallback: brute-force simple multiples (covers tiny fields).
+    P = G
+    for i in range(1, min(2_000_000, hasse_hi) + 1):
+        if ctx.expired():
+            return
+        if P == Q:
+            out = str(i).encode("ascii")
+            yield out, "Elliptic-curve discrete log recovered",
+            {"bits": p.bit_length()}, .98
+            return
+        P = _ec_add(P, G, p, a)
+    return
 
 
 # -------------------------------------------------- Diffie-Hellman XOR ----

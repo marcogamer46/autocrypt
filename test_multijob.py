@@ -1,7 +1,16 @@
 #!/usr/bin/env python3
 """G1 determinism: every fixture must produce identical top-3 (chain+plaintext)
-with -j 1 and -j 4."""
-import subprocess, sys, json, time
+with -j 1 and -j 4.
+
+Rewritten (BKLG-12) to be faster and more diagnostic:
+  * runs the two jobs (and all fixtures) in parallel via a thread pool,
+  * separates a run/JSON error from a genuine mismatch, and
+  * prints the two result lists when a mismatch is found.
+"""
+import subprocess
+import sys
+import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -20,29 +29,70 @@ FIXTURES = [
     "sequences_synth.py",
 ]
 
-def run(path, jobs, extra=()):
-    args = [sys.executable, "autocrypt.py", str(path), "--timeout", "35",
-            "--json", "--top", "3", "--jobs", str(jobs)] + list(extra)
-    r = subprocess.run(args, capture_output=True, text=True, timeout=70)
+TIMEOUT_S = 30
+SUBPROC_TIMEOUT = TIMEOUT_S + 20
+MAX_WORKERS = 4
+
+
+def run(path, jobs):
+    """Return (error, rows). rows = list of (chain, plaintext) for top 3.
+    error is None on success, else a short diagnostic string."""
+    args = [sys.executable, "autocrypt.py", str(path), "--timeout", str(TIMEOUT_S),
+            "--json", "--top", "3", "--jobs", str(jobs)]
+    try:
+        r = subprocess.run(args, capture_output=True, text=True,
+                            timeout=SUBPROC_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return "TIMEOUT", None
     try:
         out = json.loads(r.stdout or "[]")
         if isinstance(out, dict):
             out = out.get("results", [])
-    except Exception:
-        return None
-    return [(x["chain"], x["plaintext"]) for x in out[:3]]
+    except Exception as exc:
+        return f"JSON-ERR:{type(exc).__name__}", None
+    if not isinstance(out, list):
+        return "BAD-JSON-SHAPE", None
+    try:
+        return None, [(x["chain"], x["plaintext"]) for x in out[:3]]
+    except (KeyError, TypeError) as exc:
+        return f"SHAPE-ERR:{type(exc).__name__}", None
 
-fails = []
-for f in FIXTURES:
-    p = TMP / f
-    if not p.exists():
-        continue
-    a = run(p, 1)
-    b = run(p, 4)
-    if a is None or b is None or a != b:
-        fails.append((f, a, b))
-        print("FAIL", f)
-    else:
-        print("OK  ", f)
-print(f"\nMULTIJOB: {len(FIXTURES)-len(fails)}/{len(FIXTURES)} equal")
-sys.exit(1 if fails else 0)
+
+def check_one(path):
+    if not path.exists():
+        return path.name, None, None, "SKIP missing"
+    a = run(path, 1)
+    b = run(path, 4)
+    if a[0] or b[0]:
+        return path.name, a, b, "RUN-ERROR"
+    if a[1] != b[1]:
+        return path.name, a, b, "MISMATCH"
+    return path.name, a, b, "OK"
+
+
+def main():
+    paths = [TMP / f for f in FIXTURES]
+    fails = []
+    ran = 0
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+        for name, a, b, status in ex.map(check_one, paths):
+            if status == "SKIP missing":
+                continue
+            ran += 1
+            if status == "OK":
+                print("OK  ", name)
+            else:
+                fails.append((name, a, b, status))
+                print("FAIL", name, status)
+                if status == "MISMATCH":
+                    print("    j=1:", a[1])
+                    print("    j=4:", b[1])
+                elif status == "RUN-ERROR":
+                    print("    j=1 run:", a[0])
+                    print("    j=4 run:", b[0])
+    print(f"\nMULTIJOB: {ran - len(fails)}/{ran} equal")
+    sys.exit(1 if fails else 0)
+
+
+if __name__ == "__main__":
+    main()

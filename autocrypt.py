@@ -110,9 +110,10 @@ def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=200,
                 ctx.pool.shutdown(wait=False, cancel_futures=True)
     if verbose:
         for name, dt in sorted(ctx.solver_times.items(), key=lambda kv: -kv[1])[:12]:
-            print(f"[verbose] solver time {name}: {dt:.2f}s")
+            print(f"[verbose] solver time {name}: {dt:.2f}s", file=sys.stderr)
         if ctx.exact_found:
-            print(f"[verbose] verified exact at {ctx.exact_time - ctx.search_t0:.2f}s: {ctx.exact_chain}")
+            print(f"[verbose] verified exact at {ctx.exact_time - ctx.search_t0:.2f}s: {ctx.exact_chain}",
+                  file=sys.stderr)
     # Hide low-confidence junk: it only misleads. Flags and exact recoveries
     # always stay. Core already floors genuine plaintext at ~0.62, so anything
     # below 0.60 that is not an exact recovery is a weak guess (short-text note,
@@ -132,7 +133,8 @@ def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=200,
     if verbose:
         for r in res:
             print(f"[verbose] kept: {r['chain']} (confidence {r['confidence']}, "
-                  f"flag={r.get('is_flag')}) -- {r.get('_reason', '')}")
+                  f"flag={r.get('is_flag')}) -- {r.get('_reason', '')}",
+                  file=sys.stderr)
     return fp, res, ctx
 
 
@@ -206,7 +208,7 @@ def main(argv=None):
         if ctx.bug_log:
             for bname, typ, tb in ctx.bug_log:
                 line = tb.splitlines()[-1].strip() if tb else ""
-                print(f"[verbose] solver {bname} raised {typ}: {line}")
+                print(f"[verbose] solver {bname} raised {typ}: {line}", file=sys.stderr)
         if ctx.strict and (ctx.strict_failed or any(
                 "[BUG" in f for f in ctx.failures)):
             ctx.strict_failed = True

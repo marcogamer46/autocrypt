@@ -33,18 +33,12 @@ work is code-quality (pool scheduling, tests, budget edges, CLI flags).
 (empty)
 
 ## Backlog
-- BKLG-01 [bugfix, high, p1] Rework pooled-executor scheduling: per-solver
-  deadlines reach workers, `.result()` timeouts, `--fast` skip before
-  submission. target: core.py:601-674.
 - BKLG-02 [test, medium, p1] Add regression tests guarding UI encode-safety,
   results_panel preview, timeout-invariance. target: ui.py.
 - BKLG-03 [test, medium, p1] Repair/determinize test_flaws.py / test_flaws2.py
   (Windows-relative paths, seeding, monotonic clock). target: test_flaws2.py.
 - BKLG-09 [bugfix, low, p3] Honor `--no-color` in ui._color_on.
   target: autocrypt.py:164, ui.py:21.
-- BKLG-12 [test, high, p3] Harden/speed test_multijob.py (fewer subprocesses,
-  mismatch diagnostics, no None-osrun-as-mismatch).
-  target: test_multijob.py.
 - BKLG-14 [cleanup, low, p4] Purge scratch/unreferenced artifacts after
   verifying each target (keep-list + active-process checks). In progress:
   37 orphaned scratch_*.py (none git-tracked, none referenced, none running)
@@ -99,3 +93,27 @@ work is code-quality (pool scheduling, tests, budget edges, CLI flags).
   (stochastic hillclimber — yields printable candidate, no hardcoded flag),
   hill-2x2 full-enumeration recovery (true key ranked #0 in prefilter), and
   watcher classify api/flagged/other. ALL OK.
+- BKLG-12 [2026-11-08] Rewrote test_multijob.py as a thread-pool harness that
+  compares -j1 vs -j4 top-3 (chain+plaintext) per fixture, separating
+  RUN-ERROR/MISMATCH/SKIP. Now 36/36 equal (previously 34/36 — the two
+  mismatches were ec_sample + real_dlp/output.txt, both genuinely unsolved).
+- BKLG-15 [2026-11-08] `--json` corruption fixed: all `[verbose]` diagnostic
+  prints (solver-time, verified-exact, kept-rows, bug_log) moved to
+  sys.stderr. Previously 8 run_tests fixtures failed with JSONDecodeError.
+- BKLG-16 [2026-11-08] Fixed pre-existing `UnboundLocalError: match_text`
+  crash in core.py: `match_text` was referenced inside the evidence gate
+  (`flag_shaped or (recovered and not statistical)`) but only assigned under
+  `if flag_match:`. Every recovered-type solver (RSA, EC-DLP, ECDSA, DSA,
+  Franklin-Reiter, LCG) crashed and silently dropped its result. Added
+  `match_text = ""` default. This was the sole cause of 7 run_tests ERR rows;
+  run_tests went 35/43 → 43/43. Verified no regression: blind3/blind4 25/25
+  (serial), matrix/flagshape/e3/e4/e7/families/xorfamily/substitution/
+  transposition/rot13/base36/b16/hexfamily/affine/rsafamilies/playfair/
+  optional/flaws all PASS.
+- BKLG-17 [2026-11-08] Added generic small-field `elliptic-curve-dlog`
+  solver (parse p/a/b/gx/gy/qx/qy, verify on-curve, BSGS/brute-force over
+  the small subgroup; no hardcoded flags) and widened the `dlp-composite-
+  smooth` matcher to fire on n+c without an explicit g (base hypothesised).
+  Together these make ec_sample (ECC k=7) and real_dlp/output.txt (smooth-
+  composite DLP, base 3) recover fully and deterministically — multijob
+  36/36, run_tests ecdlp/real_dlp PASS.
