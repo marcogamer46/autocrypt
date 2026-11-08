@@ -181,6 +181,9 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.top < 0 or args.timeout <= 0:
         build_parser().error("--top must be nonnegative and --timeout must be positive")
+    if args.no_color:
+        import ui
+        ui.COLOR_ENABLED = False
     try:
         flag_regex = re.compile(args.flag_format, re.DOTALL)
     except re.error as exc:

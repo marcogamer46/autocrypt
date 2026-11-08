@@ -18,7 +18,15 @@ _ANSI = {"cyan": "\033[36m", "green": "\033[32m", "yellow": "\033[33m",
 
 def _width(): return max(1, shutil.get_terminal_size((80, 24)).columns)
 
-def _color_on(): return bool(getattr(sys.stdout, "isatty", lambda: False)()) and "NO_COLOR" not in os.environ
+# Set by autocrypt.py from the CLI: None = auto-detect (default), True/False
+# = force on/off (e.g. `--no-color`). `--no-color` and the NO_COLOR env var
+# always win over auto-detection.
+COLOR_ENABLED = None
+
+def _color_on():
+    if COLOR_ENABLED is not None:
+        return bool(COLOR_ENABLED)
+    return bool(getattr(sys.stdout, "isatty", lambda: False)()) and "NO_COLOR" not in os.environ
 
 def paint(text, color):
     return f"{_ANSI[color]}{text}{_ANSI['reset']}" if _color_on() else str(text)

@@ -86,6 +86,19 @@ def _run_jobs(path, timeout):
             rows[0].get("confidence"))
 
 
+def test_no_color_flag_disables_ansi():
+    """--no-color (wired via ui.COLOR_ENABLED) must disable ANSI even when
+    the environment would otherwise enable it."""
+    import ui
+    ui.COLOR_ENABLED = False
+    try:
+        assert ui._color_on() is False
+        assert ui.paint("x", "green") == "x"
+    finally:
+        ui.COLOR_ENABLED = None
+    print("OK  --no-color disables ANSI paint")
+
+
 def test_timeout_invariance():
     """A larger timeout may surface MORE lower-ranked candidates but must never
     change (or downgrade) the top-1 result: chain+plaintext+confidence."""
@@ -107,6 +120,7 @@ def main():
     test_verdict_banner_self_safe()
     test_results_panel_preview_and_notes()
     test_panels_render_under_reconfigured_stdout()
+    test_no_color_flag_disables_ansi()
     test_timeout_invariance()
     print("UI_SAFETY: ALL OK")
 

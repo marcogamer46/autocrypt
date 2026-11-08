@@ -42,8 +42,6 @@ work is code-quality (pool scheduling, tests, budget edges, CLI flags).
   (Windows-relative paths, seeding, monotonic clock). target: test_flaws2.py.
 - BKLG-09 [bugfix, low, p3] Honor `--no-color` in ui._color_on.
   target: autocrypt.py:164, ui.py:21.
-- BKLG-09 [bugfix, low, p3] Honor `--no-color` in ui._color_on.
-  target: autocrypt.py:164, ui.py:21.
 - BKLG-10 [cleanup, low, p3] Wire up or remove ctx.grace / G1B_GRACE
   dead config. target: core.py:516-519,1148.
 - BKLG-11 [test, medium, p3] Add playfair + hill-2x2 + watcher regression tests.
@@ -85,3 +83,7 @@ work is code-quality (pool scheduling, tests, budget edges, CLI flags).
   that is <= 0: it terminates the pool and returns [] cleanly instead of
   passing a non-positive timeout to map_async().get() (which raises soft  Verified: e7 4/4, matrix, flagshape, ui_safety pass; dlp512 determinism
   jobs=1 vs 4 MATCH; timeout-invariance top-1 stable t=10 vs 40.
+- BKLG-09 [2026-11-08] `--no-color` now actually disables ANSI: added
+  ui.COLOR_ENABLED module toggle (None=auto, False=off, True=on) consulted by
+  _color_on(), and autocrypt.py sets it False when --no-color is passed.
+  Added regression test test_no_color_flag_disables_ansi. ui_safety 5/5 pass.
