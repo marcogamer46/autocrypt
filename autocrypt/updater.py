@@ -96,8 +96,8 @@ def _update_git(root: Path, package_dir: Path):
         print("autocrypt: git fetch failed (online? remote configured?).",
               file=sys.stderr)
         return 1
-    head = _run(["git", "rev-parse", "HEAD"], cwd=root).std.strip()
-    up = _run(["git", "rev-parse", f"origin/{branch}"], cwd=root).std.strip()
+    head = _run(["git", "rev-parse", "HEAD"], cwd=root).stdout.strip()
+    up = _run(["git", "rev-parse", f"origin/{branch}"], cwd=root).stdout.strip()
     old = current_version() or head[:7]
     if head == up:
         print(f"autocrypt: already latest ({old}).")
