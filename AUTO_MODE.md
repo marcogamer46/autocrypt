@@ -74,3 +74,8 @@ work is code-quality (pool scheduling, tests, budget edges, CLI flags).
   with non-cp1252 flags; results_panel preview/truncation/notes; all panels
   render under reconfigured cp1252 stdout; timeout-invariance top-1 stable
   t=10 vs 20. 4/4 pass.
+- BKLG-03 [2026-11-08] Repaired test_flaws.py / test_flaws2.py: replaced
+  hardcoded Linux paths in test_flaws2.py with Path(__file__).parent-relative
+  imports; switched all deadlines/timers from time.time() to
+  time.monotonic() (matches Context.expired); seeded RNG for determinism.
+  Full test_flaws.py now runs on Windows: 0 flaws; smoke of both OK.

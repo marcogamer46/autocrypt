@@ -14,6 +14,9 @@ sys.path.insert(0, str(ROOT))
 from solvers_more import factor_all, _pm1, _pp1, _rho, _is_prime
 from core import Context
 
+# Deterministic runs: seed RNG so results are reproducible across machines.
+random.seed(20261108)
+
 _FLAG_RE = re.compile(r"\w{1,40}\{.*?\}")  # harmless default for deep unit tests
 
 def test_factor_all_correctness(limit=1000000, sample_size=1000):
@@ -29,10 +32,10 @@ def test_factor_all_correctness(limit=1000000, sample_size=1000):
         if n < 15:
             continue
             
-        start_time = time.time()
-        ctx = Context(deadline=time.time() + 10.0, flag_regex=_FLAG_RE)  # 10 second timeout
+        start_time = time.monotonic()
+        ctx = Context(deadline=time.monotonic() + 10.0, flag_regex=_FLAG_RE)  # 10 second timeout
         result = factor_all(n, ctx)
-        elapsed = time.time() - start_time
+        elapsed = time.monotonic() - start_time
         
         if result is None:
             # Check if n is actually prime
@@ -108,10 +111,10 @@ def test_specific_numbers():
         if n > 4_000_000_000:
             continue
             
-        start_time = time.time()
-        ctx = Context(deadline=time.time() + 10.0, flag_regex=_FLAG_RE)
+        start_time = time.monotonic()
+        ctx = Context(deadline=time.monotonic() + 10.0, flag_regex=_FLAG_RE)
         result = factor_all(n, ctx)
-        elapsed = time.time() - start_time
+        elapsed = time.monotonic() - start_time
         
         if result is None:
             flaws.append(f"factor_all failed on semiprime n={n}={p}*{q}")
@@ -130,10 +133,10 @@ def test_specific_numbers():
         if n > 4_000_000_000:
             continue
             
-        start_time = time.time()
-        ctx = Context(deadline=time.time() + 10.0, flag_regex=_FLAG_RE)
+        start_time = time.monotonic()
+        ctx = Context(deadline=time.monotonic() + 10.0, flag_regex=_FLAG_RE)
         result = factor_all(n, ctx)
-        elapsed = time.time() - start_time
+        elapsed = time.monotonic() - start_time
         
         if result is None:
             flaws.append(f"factor_all failed on prime power n={n}={p}^{e}")
@@ -183,10 +186,10 @@ def test_pollard_pm1():
             if n > 4_000_000_000:
                 continue
                 
-            ctx = Context(deadline=time.time() + 10.0, flag_regex=_FLAG_RE)
-            start_time = time.time()
+            ctx = Context(deadline=time.monotonic() + 10.0, flag_regex=_FLAG_RE)
+            start_time = time.monotonic()
             factor = _pm1(n, B=5000)  # Use a small bound
-            elapsed = time.time() - start_time
+            elapsed = time.monotonic() - start_time
             
             if factor is None:
                 # If BOTH p-1 and q-1 are B-smooth, the p-1 method provably
@@ -239,10 +242,10 @@ def test_pollard_pp1():
             if n > 4_000_000_000:
                 continue
                 
-            ctx = Context(deadline=time.time() + 10.0, flag_regex=_FLAG_RE)
-            start_time = time.time()
+            ctx = Context(deadline=time.monotonic() + 10.0, flag_regex=_FLAG_RE)
+            start_time = time.monotonic()
             factor = _pp1(n, ctx)
-            elapsed = time.time() - start_time
+            elapsed = time.monotonic() - start_time
             
             if factor is None:
                 # If BOTH p+1 and q+1 are B-smooth, Williams' p+1 provably
@@ -279,10 +282,10 @@ def test_rho():
         if n > 4_000_000_000:
             continue
             
-        ctx = Context(deadline=time.time() + 10.0, flag_regex=_FLAG_RE)
-        start_time = time.time()
+        ctx = Context(deadline=time.monotonic() + 10.0, flag_regex=_FLAG_RE)
+        start_time = time.monotonic()
         factor = _rho(n, ctx, limit=100000)
-        elapsed = time.time() - start_time
+        elapsed = time.monotonic() - start_time
         
         if factor is None:
             # Rho might fail sometimes, but let's see if we can find a factor with more iterations

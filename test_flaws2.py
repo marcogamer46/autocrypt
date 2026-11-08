@@ -1,40 +1,23 @@
 #!/usr/bin/env python3
-"""Test script to find flaws in autocrypt components up to 4 billion.
-Avoids import issues by directly executing the source code."""
+"""Test script to find flaws in autocrypt components up to 4 billion."""
 
+import re
 import sys
 import time
 import random
 import math
+from pathlib import Path
 
-# Read and execute solvers_more.py to get the functions we need
-with open('/home/chillinmalware/Documents/autocrypt/solvers_more.py', 'r') as f:
-    solvers_more_source = f.read()
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
 
-# Create a namespace for the module
-solvers_more_ns = {
-    '__name__': 'solvers_more',
-    '__file__': '/home/chillinmalware/Documents/autocrypt/solvers_more.py',
-}
-# Execute the source code
-exec(solvers_more_source, solvers_more_ns)
+from solvers_more import factor_all, _pm1, _pp1, _rho, _is_prime
+from core import Context
 
-# Extract the functions we need
-factor_all = solvers_more_ns['factor_all']
-_pm1 = solvers_more_ns['_pm1']
-_pp1 = solvers_more_ns['_pp1']
-_rho = solvers_more_ns['_rho']
-_is_prime = solvers_more_ns['_is_prime']
-# We also need Context from core
-# Let's read core.py as well
-with open('/home/chillinmalware/Documents/autocrypt/core.py', 'r') as f:
-    core_source = f.read()
-core_ns = {
-    '__name__': 'core',
-    '__file__': '/home/chillinmalware/Documents/autocrypt/core.py',
-}
-exec(core_source, core_ns)
-Context = core_ns['Context']
+# Deterministic runs: seed RNG so results are reproducible across machines.
+random.seed(20261108)
+
+_FLAG_RE = re.compile(r"\w{1,40}\{.*?\}")
 
 def test_factor_all_correctness(limit=1000000, sample_size=500):
     """Test factor_all correctness on random numbers up to limit."""
@@ -49,11 +32,11 @@ def test_factor_all_correctness(limit=1000000, sample_size=500):
         if n < 15:
             continue
             
-        start_time = time.time()
+        start_time = time.monotonic()
         flag_regex = __import__('re').compile(r'\w{1,40}\{.*?\}')
-        ctx = Context(deadline=time.time() + 10.0, flag_regex=flag_regex)  # 10 second timeout
+        ctx = Context(deadline=time.monotonic() + 10.0, flag_regex=flag_regex)  # 10 second timeout
         result = factor_all(n, ctx)
-        elapsed = time.time() - start_time
+        elapsed = time.monotonic() - start_time
         
         if result is None:
             # Check if n is actually prime
@@ -117,11 +100,11 @@ def test_specific_numbers():
         if n > 4_000_000_000:
             continue
             
-        start_time = time.time()
+        start_time = time.monotonic()
         flag_regex = __import__('re').compile(r'\w{1,40}\{.*?\}')
-        ctx = Context(deadline=time.time() + 10.0, flag_regex=flag_regex)
+        ctx = Context(deadline=time.monotonic() + 10.0, flag_regex=flag_regex)
         result = factor_all(n, ctx)
-        elapsed = time.time() - start_time
+        elapsed = time.monotonic() - start_time
         
         if result is None:
             flaws.append(f"factor_all failed on semiprime n={n}={p}*{q}")
@@ -140,11 +123,11 @@ def test_specific_numbers():
         if n > 4_000_000_000:
             continue
             
-        start_time = time.time()
+        start_time = time.monotonic()
         flag_regex = __import__('re').compile(r'\w{1,40}\{.*?\}')
-        ctx = Context(deadline=time.time() + 10.0, flag_regex=flag_regex)
+        ctx = Context(deadline=time.monotonic() + 10.0, flag_regex=flag_regex)
         result = factor_all(n, ctx)
-        elapsed = time.time() - start_time
+        elapsed = time.monotonic() - start_time
         
         if result is None:
             flaws.append(f"factor_all failed on prime power n={n}={p}^{e}")
@@ -194,10 +177,10 @@ def test_pollard_pm1():
             if n > 4_000_000_000:
                 continue
                 
-            ctx = Context(deadline=time.time() + 10.0)
-            start_time = time.time()
+            ctx = Context(deadline=time.monotonic() + 10.0)
+            start_time = time.monotonic()
             factor = _pm1(n, B=5000)  # Use a small bound
-            elapsed = time.time() - start_time
+            elapsed = time.monotonic() - start_time
             
             if factor is None:
                 # Maybe p-1 is not smooth enough for B=5000, try with higher bound
@@ -244,10 +227,10 @@ def test_pollard_pp1():
             if n > 4_000_000_000:
                 continue
                 
-            ctx = Context(deadline=time.time() + 10.0)
-            start_time = time.time()
+            ctx = Context(deadline=time.monotonic() + 10.0)
+            start_time = time.monotonic()
             factor = _pp1(n, ctx)
-            elapsed = time.time() - start_time
+            elapsed = time.monotonic() - start_time
             
             if factor is None:
                 # Try to see if p+1 is actually smooth enough
@@ -280,10 +263,10 @@ def test_rho():
         if n > 4_000_000_000:
             continue
             
-        ctx = Context(deadline=time.time() + 10.0)
-        start_time = time.time()
+        ctx = Context(deadline=time.monotonic() + 10.0)
+        start_time = time.monotonic()
         factor = _rho(n, ctx, limit=100000)
-        elapsed = time.time() - start_time
+        elapsed = time.monotonic() - start_time
         
         if factor is None:
             # Rho might fail sometimes, but let's see if we can find a factor with more iterations
