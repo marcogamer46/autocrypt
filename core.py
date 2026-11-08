@@ -699,8 +699,14 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                                 and prev_deadline - now > 4.0 * ctx.speed):
                             ctx.deadline = min(prev_deadline, now + 4.0 * ctx.speed)
                             _extended = True
-                            continue
-                        break
+                            # Fall through and process THIS yielded candidate too:
+                            # it was produced before the slice ended, and the
+                            # deadline was extended specifically to keep going.
+                            # (Previously this `continue` dropped the boundary
+                            # candidate even though the extension kept the
+                            # solver alive — losing a valid result.)
+                        else:
+                            break
                     _n_yields += 1
                     out = plain if isinstance(plain, bytes) else str(plain).encode("utf-8", "replace")
                     score, reason = ctx.assess(out) if ctx.assess else (float(claimed_score), "")

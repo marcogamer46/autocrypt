@@ -40,9 +40,8 @@ work is code-quality (pool scheduling, tests, budget edges, CLI flags).
   results_panel preview, timeout-invariance. target: ui.py.
 - BKLG-03 [test, medium, p1] Repair/determinize test_flaws.py / test_flaws2.py
   (Windows-relative paths, seeding, monotonic clock). target: test_flaws2.py.
-- BKLG-04 [bugfix, low, p2] Fix budget-cutoff edges: adaptive-extension
-  dropping boundary yield; `_parallel_map` non-positive timeout clamp.
-  target: core.py:683-692, solvers.py:1213.
+- BKLG-09 [bugfix, low, p3] Honor `--no-color` in ui._color_on.
+  target: autocrypt.py:164, ui.py:21.
 - BKLG-09 [bugfix, low, p3] Honor `--no-color` in ui._color_on.
   target: autocrypt.py:164, ui.py:21.
 - BKLG-10 [cleanup, low, p3] Wire up or remove ctx.grace / G1B_GRACE
@@ -79,3 +78,10 @@ work is code-quality (pool scheduling, tests, budget edges, CLI flags).
   imports; switched all deadlines/timers from time.time() to
   time.monotonic() (matches Context.expired); seeded RNG for determinism.
   Full test_flaws.py now runs on Windows: 0 flaws; smoke of both OK.
+- BKLG-04 [2026-11-08] Fixed budget-cutoff edges. (1) core.py adaptive
+  extension no longer `continue`s (dropping) the boundary candidate when the
+  per-solver slice is extended — it falls through and processes that yield
+  too. (2) solvers._parallel_map clamps the pool wait to a remaining time
+  that is <= 0: it terminates the pool and returns [] cleanly instead of
+  passing a non-positive timeout to map_async().get() (which raises soft  Verified: e7 4/4, matrix, flagshape, ui_safety pass; dlp512 determinism
+  jobs=1 vs 4 MATCH; timeout-invariance top-1 stable t=10 vs 40.

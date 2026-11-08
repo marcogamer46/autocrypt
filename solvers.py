@@ -1209,8 +1209,15 @@ def _parallel_map(worker, args, ctx):
     try:
         method = "fork" if "fork" in mp.get_all_start_methods() else "spawn"
         pool = mp.get_context(method).Pool(min(2, len(args)))
+        _rem = ctx.deadline - time.monotonic()
+        if _rem <= 0:
+            # Deadline already elapsed (possibly during pool spin-up): do not
+            # call get() with a non-positive timeout, which raises. Treat as
+            # a clean budget cutoff and terminate the pool immediately.
+            pool.terminate()
+            return []
         result = pool.map_async(worker, args)
-        out = result.get(timeout=ctx.deadline - time.monotonic())
+        out = result.get(timeout=_rem)
         pool.close()
         return out
     except KeyboardInterrupt:
