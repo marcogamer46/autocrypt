@@ -46,7 +46,11 @@ work is code-quality (pool scheduling, tests, budget edges, CLI flags).
   mismatch diagnostics, no None-osrun-as-mismatch).
   target: test_multijob.py.
 - BKLG-14 [cleanup, low, p4] Purge scratch/unreferenced artifacts after
-  verifying each target (keep-list + active-process checks). target: scratch_*.
+  verifying each target (keep-list + active-process checks). In progress:
+  37 orphaned scratch_*.py (none git-tracked, none referenced, none running)
+  moved to archive_scratch/; live scratch_watchdog.py kept; orphaned output
+  logs (families_iso*.txt, sephex2.txt) archived; stray NUL removed.
+  target: scratch_*.
 
 ## Resolved or underdetermined (from prior work — do not re-open)
 - BKLG-05 → SOLVED (substitution-wordlist solver recovered flag + study guide).
