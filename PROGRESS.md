@@ -41,6 +41,9 @@ Done:
 - **Final baseline**: `run_tests.sh` **43/43 PASS**; standalone suite 33/34
   (only `test_flaws2` = BKLG-22, 18 pre-existing p−1/p+1 flaws — not a
   regression). Substitution-wordlist regression test passes.
+- **Pushed**: commit `a5f186b` on `origin/main`. One-liner installer URLs live
+  (HTTP 200): `raw.githubusercontent.com/marcogamer46/autocrypt/main/install.sh`
+  and `install.ps1`, plus `README.md`.
 
 ## Previous note (reviewer-feedback round) — COMPLETE
 
