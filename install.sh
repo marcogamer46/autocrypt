@@ -3,8 +3,15 @@
 # Idempotent: safe to re-run. Installs into a dedicated venv under $HOME.
 set -euo pipefail
 
-# Directory of THIS script = the repo root.
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Directory of THIS script = the repo root. When piped from a one-liner
+# (curl ... | bash) BASH_SOURCE is unset/empty, so there is no local repo and
+# we fall through to the standalone-bootstrap (clone) path below.
+SCRIPT_PATH="${BASH_SOURCE[0]:-}"
+if [ -n "$SCRIPT_PATH" ] && [ -f "$SCRIPT_PATH" ]; then
+  REPO_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+else
+  REPO_DIR=""
+fi
 INSTALL_ROOT="${AUTOCRYPT_HOME:-$HOME/.autocrypt}"
 VENV_DIR="$INSTALL_ROOT/venv"
 CFG="$VENV_DIR/autocrypt.json"
