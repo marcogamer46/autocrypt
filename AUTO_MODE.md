@@ -42,8 +42,6 @@ work is code-quality (pool scheduling, tests, budget edges, CLI flags).
   (Windows-relative paths, seeding, monotonic clock). target: test_flaws2.py.
 - BKLG-09 [bugfix, low, p3] Honor `--no-color` in ui._color_on.
   target: autocrypt.py:164, ui.py:21.
-- BKLG-11 [test, medium, p3] Add playfair + hill-2x2 + watcher regression tests.
-  target: solvers.py, watcher.py.
 - BKLG-12 [test, high, p3] Harden/speed test_multijob.py (fewer subprocesses,
   mismatch diagnostics, no None-osrun-as-mismatch).
   target: test_multijob.py.
@@ -92,3 +90,8 @@ work is code-quality (pool scheduling, tests, budget edges, CLI flags).
   the now-empty `_search_t0` global, and fixed a duplicate `serial = 0`.
   Verified: no dangling refs; e7 4/4, ui_safety, flagshape, substitution,
   rot13 all pass.
+- BKLG-11 [2026-11-08] Added test_playfair_hill_watcher.py: playfair decrypt
+  known vectors, playfair encrypt/decrypt round-trip, playfair solver smoke
+  (stochastic hillclimber — yields printable candidate, no hardcoded flag),
+  hill-2x2 full-enumeration recovery (true key ranked #0 in prefilter), and
+  watcher classify api/flagged/other. ALL OK.
