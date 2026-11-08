@@ -12,10 +12,10 @@ import math
 import re
 import struct
 
-from core import solver
-from scoring import assess, flag_plausibility, quadgram_score, english_confidence, leet_body_dict_fraction
-import solvers as S
-import solvers_more as SM  # late-bound: breaks the solvers<->solvers_more import cycle
+from autocrypt.core import solver
+from autocrypt.scoring import assess, flag_plausibility, quadgram_score, english_confidence, leet_body_dict_fraction
+import autocrypt.solvers as S
+import autocrypt.solvers_more as SM  # late-bound: breaks the solvers<->solvers_more import cycle
 
 _EN_FREQ26 = [.08167, .01492, .02782, .04253, .12702, .02228, .02015, .06094,
               .06966, .00153, .00772, .04025, .02406, .06749, .07507, .01929,

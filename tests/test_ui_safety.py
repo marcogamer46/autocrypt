@@ -11,8 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(HERE))
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 # A plaintext that ms NOT representable in cp1252 (exercises the encode-safety
 # guarantee: recovered flags may contain arbitrary Unicode/bytes).
@@ -22,7 +22,7 @@ NASTY_FLAG = "academy{λ_ok_emoji_\U0001F600}"
 def test_verdict_banner_self_safe():
     """verdict_banner must never raise on a non-cp1252-encodable flag, even
     when stdout has NOT been reconfigured (as when ui is embedded)."""
-    import ui
+    import autocrypt.ui as ui
     rows = [{"confidence": 0.98, "is_flag": True, "plaintext": NASTY_FLAG}]
     text = ui.verdict_banner(rows)
     assert isinstance(text, str) and text
@@ -33,7 +33,7 @@ def test_verdict_banner_self_safe():
 
 
 def test_results_panel_preview_and_notes():
-    import ui
+    import autocrypt.ui as ui
     rows = [{"chain": f"c{i}", "confidence": 0.9, "is_flag": False,
              "plaintext": "hello world " * 20} for i in range(5)]
     text = ui.results_panel(rows, width=70, preview_boxes=2)
@@ -53,7 +53,7 @@ def test_results_panel_preview_and_notes():
 def test_panels_render_under_reconfigured_stdout():
     """Under the CLI's stdout.reconfigure(errors='replace'), all panels render
     without raising even with non-ASCII plaintext."""
-    import ui
+    import autocrypt.ui as ui
     buf = io.BytesIO()
     old = sys.stdout
     sys.stdout = io.TextIOWrapper(buf, encoding="cp1252", errors="replace")
@@ -74,9 +74,9 @@ def test_panels_render_under_reconfigured_stdout():
 
 def _run_jobs(path, timeout):
     r = subprocess.run(
-        [sys.executable, str(HERE / "autocrypt.py"), str(path),
+        [sys.executable, "-m", "autocrypt.cli", str(path),
          "--timeout", str(timeout), "--json", "--top", "3"],
-        capture_output=True, text=True, timeout=timeout + 30, cwd=HERE)
+        capture_output=True, text=True, timeout=timeout + 30, cwd=str(ROOT))
     m = re.search(r"\{.*\}", r.stdout, re.S)
     d = json.loads(m.group(0)) if m else {}
     rows = d.get("results", [])
@@ -89,7 +89,7 @@ def _run_jobs(path, timeout):
 def test_no_color_flag_disables_ansi():
     """--no-color (wired via ui.COLOR_ENABLED) must disable ANSI even when
     the environment would otherwise enable it."""
-    import ui
+    import autocrypt.ui as ui
     ui.COLOR_ENABLED = False
     try:
         assert ui._color_on() is False
@@ -103,7 +103,7 @@ def test_timeout_invariance():
     """A larger timeout may surface MORE lower-ranked candidates but must never
     change (or downgrade) the top-1 result: chain+plaintext+confidence."""
     # Reuse a known-solvable layered input (hex -> flag).
-    path = HERE / "tm_timeout_invar.txt"
+    path = ROOT / "tm_timeout_invar.txt"
     path.write_text("Check this: 61636164656d797b6836785f6c617965727d")
     try:
         a = _run_jobs(path, 10)

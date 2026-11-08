@@ -20,7 +20,7 @@ def run_autocrypt(text):
         path = f.name
     try:
         env = dict(os.environ, PYTHONPATH=ROOT)
-        res = subprocess.run([PY, "autocrypt.py", "--json", "--top", "10", path],
+        res = subprocess.run([PY, "-m", "autocrypt.cli", "--json", "--top", "10", path],
                              capture_output=True, text=True, env=env, cwd=ROOT,
                              timeout=180)
         m = re.search(r"\{.*\}", res.stdout, re.S)

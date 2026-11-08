@@ -21,15 +21,15 @@ random.seed(20261101)  # fixed seed: deterministic output across runs
 from e3_section import build as e3_make
 e3_make()
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import solvers  # noqa: F401  (loads the full registry; resolves circular imports)
-from solvers_pack6 import _enigma_encrypt, _Z85_ALPH
-from solvers_pack3 import _BRAILLE
-from scoring import assess
-import solvers_more as _more
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import autocrypt.solvers  # noqa: F401  (loads the full registry; resolves circular imports)
+from autocrypt.solvers_pack6 import _enigma_encrypt, _Z85_ALPH
+from autocrypt.solvers_pack3 import _BRAILLE
+from autocrypt.scoring import assess
+import autocrypt.solvers_more as _more
 _is_prime = _more._is_prime
 
-TMP = Path(__file__).resolve().parent / "fixtures"
+TMP = Path(__file__).resolve().parent.parent / "fixtures"
 os.makedirs(TMP, exist_ok=True)
 
 def w(name, data, mode="wb"):

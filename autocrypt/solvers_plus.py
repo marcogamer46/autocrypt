@@ -8,11 +8,11 @@ import random
 import re
 import string
 
-from core import solver
-from scoring import assess, WORDS
-import solvers as S
-import solvers_more as SM  # module namespace (late-bound) breaks an import cycle:
-# test_* may import solvers_more first -> solvers -> solvers_plus -> solvers_more
+from autocrypt.core import solver
+from autocrypt.scoring import assess, WORDS
+import autocrypt.solvers as S
+import autocrypt.solvers_more as SM  # module namespace (late-bound) breaks an import cycle:
+# test_* may import autocrypt.solvers_more first -> solvers -> solvers_plus -> solvers_more
 # (still partial). Referencing SM.<name> at call time avoids needing the names
 # to exist while the module is only partially initialized.
 
@@ -209,7 +209,7 @@ _HASH = {32: ("md5",), 40: ("sha1",), 56: ("sha224",), 64: ("sha256", "sha3_256"
 def solve_hash(data, ctx):
     # Delegate to the pack7 hash cracker (label-aware + hash->XOR pairing);
     # keep this registration so imports order does not shadow it.
-    from solvers_pack7 import solve_hash_crack
+    from autocrypt.solvers_pack7 import solve_hash_crack
     yield from solve_hash_crack(data, ctx)
 
 

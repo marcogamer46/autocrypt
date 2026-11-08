@@ -11,9 +11,10 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-from core import Context, fingerprint, search
-from scoring import assess
-import solvers  # register built-ins
+from autocrypt.core import Context, fingerprint, search
+from autocrypt.scoring import assess
+from autocrypt._version import __version__ as _version
+import autocrypt.solvers  # register built-ins
 
 
 def _params(spec: str) -> dict:
@@ -35,7 +36,7 @@ def _read(args):
     files = [f for f in (args.file or ["-"])]
     if files == ["-"]:
         return sys.stdin.buffer.read(), [], ""
-    import challenge
+    import autocrypt.challenge as challenge
     return challenge.load(files)
 
 
@@ -79,7 +80,7 @@ def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=200,
     if jobs > 1 and data and len(data) >= 128:
         pool = ProcessPoolExecutor(max_workers=jobs)
         ctx.pool = pool
-    import solvers as _solvers
+    import autocrypt.solvers as _solvers
     _exact_res = None
     try:
         _txt = data.decode("utf-8")
@@ -91,7 +92,7 @@ def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=200,
         except Exception:
             _items = []
         if _items:
-            from core import SearchResult
+            from autocrypt.core import SearchResult
             _recs = [{"chain": m, "plaintext": o if isinstance(o, str) else o.decode("utf-8", "replace"),
                       "confidence": s, "is_flag": False, "_reason": "exact linear-recurrence recovery"}
                      for o, m, p, s in _items]
@@ -140,7 +141,7 @@ def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=200,
 
 def build_parser():
     p = argparse.ArgumentParser(
-        prog="autocrypt.py",
+        prog="autocrypt",
         description="Fingerprint unknown data and search for common CTF crypto weaknesses.",
     )
     p.add_argument("file", nargs="*", default=["-"],
@@ -164,7 +165,23 @@ def build_parser():
     p.add_argument("--deep", action="store_true",
                    help="2x per-solver time and deeper search (for stubborn challenges)")
     p.add_argument("--no-color", action="store_true", help="disable terminal colors")
+    p.add_argument("--update", "-update", action="store_true",
+                   help="self-update: pull latest code from the git repo this install was made from and reinstall into the active virtualenv")
+    p.add_argument("--version", action="version",
+                   version=f"autocrypt {_version}")
     return p
+
+
+def _self_update():
+    """Self-update used by --update, delegated to autocrypt.updater.
+
+    The updater dispatches on how this install was created (git checkout,
+    installer-created venv via <venv>/autocrypt.json, or pip-installed from
+    GitHub), refuses to touch a dirty working tree in git mode, and never runs
+    destructive commands.
+    """
+    from autocrypt.updater import do_update
+    return do_update()
 
 
 def main(argv=None):
@@ -178,13 +195,15 @@ def main(argv=None):
             pass
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv and sys.stdin.isatty():
-        from ui import interactive
+        from autocrypt.ui import interactive
         return interactive()
     args = build_parser().parse_args(argv)
+    if args.update:
+        return _self_update()
     if args.top < 0 or args.timeout <= 0:
         build_parser().error("--top must be nonnegative and --timeout must be positive")
     if args.no_color:
-        import ui
+        import autocrypt.ui as ui
         ui.COLOR_ENABLED = False
     try:
         flag_regex = re.compile(args.flag_format, re.DOTALL)
@@ -272,7 +291,7 @@ def main(argv=None):
             label = ""
         print(f"\n{i}. {result['chain']}")
         if args.explain:
-            from explain import explain_chain
+            from autocrypt.explain import explain_chain
             for _line in explain_chain(result["chain"]):
                 print(f"     └ {_line}")
         if is_flag:

@@ -11,6 +11,7 @@ import sys
 import time
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import test_hexfamily as H
 
@@ -97,9 +98,9 @@ def run_case_multi(data, src, timeout=20):
     """Run autocrypt on a multi-file pair (source + output) via tmp files."""
     Path("tm.py").write_bytes(src)
     Path("tm.txt").write_bytes(data)
-    r = subprocess.run([sys.executable, "autocrypt.py", "tm.py", "tm.txt",
+    r = subprocess.run([sys.executable, "-m", "autocrypt.cli", "tm.py", "tm.txt",
                         "--timeout", str(timeout), "--json"],
-                       capture_output=True, text=True, timeout=60)
+                       cwd=str(ROOT), capture_output=True, text=True, timeout=60)
     try:
         out = json.loads(r.stdout or "[]")
         if isinstance(out, dict):

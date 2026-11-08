@@ -10,8 +10,9 @@ import re
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = Path(__file__).resolve().parent.parent
 PY = os.path.join(ROOT, ".venv", "Scripts", "python.exe")
 
 
@@ -33,8 +34,8 @@ def run_autocrypt(text):
         f.write(text)
         path = f.name
     try:
-        env = dict(os.environ, PYTHONPATH=ROOT)
-        res = subprocess.run([PY, "autocrypt.py", "--json", "--top", "10", path],
+        env = dict(os.environ, PYTHONPATH=str(ROOT))
+        res = subprocess.run([PY, "-m", "autocrypt.cli", "--json", "--top", "10", path],
                              capture_output=True, text=True, env=env, cwd=ROOT,
                              timeout=180)
         raw = res.stdout

@@ -10,6 +10,9 @@ required and never executed).
 
 ## Documentation
 
+- **[Wiki — read & understand the project](docs/wiki/index.md)** — a
+  beginner-friendly hub: overview, quickstart, how it works, CLI reference,
+  developer guide, and FAQ.
 - [`docs/SCORING.md`](docs/SCORING.md) — how candidate plaintexts are scored
   and ranked (English evidence, flag-plausibility, trust tiers).
 - [`docs/SOLVERS.md`](docs/SOLVERS.md) — catalog of all 146 registered solvers,
@@ -22,10 +25,10 @@ required and never executed).
 ### Pipeline
 
 ```
-input -> fingerprint(data) -> best-first layered decode search (core.py)
-         -> solver registry (solvers*.py)
+input -> fingerprint(data) -> best-first layered decode search (autocrypt/core.py)
+         -> solver registry (autocrypt/solvers*.py)
          -> candidate records (chain, plaintext, confidence, trust)
-         -> rank + display (autocrypt.py / ui.py)
+         -> rank + display (autocrypt/ui.py, autocrypt/cli.py)
 ```
 
 1. **Fingerprint** (`core.fingerprint`): cheap structural stats — charset,
@@ -57,27 +60,198 @@ input -> fingerprint(data) -> best-first layered decode search (core.py)
    After a verified exact recovery the search drains at most 8 more nodes and
    stops spawning new expansions — deterministic, load-independent output.
 
+### Common commands (cheat-sheet)
+
+```
+autocrypt --help                    # full CLI reference
+autocrypt --update                  # self-update to the latest source
+autocrypt message.txt               # solve a single blob/file
+autocrypt -j1 message.txt           # run single-threaded (deterministic ordering)
+autocrypt --top 5 message.txt       # show only the top 5 ranked candidates
+autocrypt --timeout 60 input.txt    # give it a 60s global budget
+autocrypt --json input.txt          # machine-readable output (for scripting)
+autocrypt --explain input.txt       # plain-English explanation under each result
+autocrypt --fast input.txt          # ~half the time (skip slow brute-force)
+autocrypt --deep input.txt          # 2x time + deeper layered decode search
+autocrypt challenge.py output.txt   # solve a CTF challenge (.py + captured output)
+```
+
+For development from a source checkout (no install needed):
+
+```
+python -m autocrypt.cli message.txt # run the CLI directly from the repo root
+bash run_tests.sh                   # run the regression table (43 cases)
+python3 tests/test_matrix.py --both # exhaustive matrix checks
+```
+
+### Installation
+
+Build an installable global `autocrypt` command on **Windows** or
+**Linux/macOS**. Requires **Python ≥ 3.12** (stdlib only — no third-party
+runtime dependencies).
+
+Prerequisites:
+
+- Python 3.12+ (`python --version`). On Windows, prefer the official Python
+  installer — not the Microsoft Store alias (the installer detects and skips
+  those stubs).
+- Git (the installer runs `pip install -e .`; `autocrypt --update` uses git).
+
+**Quick install — one-liner.** The fastest path downloads the installer
+directly from GitHub and runs it. It clones the latest source into
+`~/.autocrypt/src`, then does exactly what the local steps below do.
+
+Linux / macOS (bash):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/marcogamer46/autocrypt/main/install.sh | bash
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/marcogamer46/autocrypt/main/install.ps1 | iex
+```
+
+Then open a **new** terminal and run `autocrypt --help`.
+
+> Review what you run. Piping a remote script straight into your shell or
+> PowerShell executes whatever is at that URL — a common but trust-sensitive
+> pattern. To inspect first, fetch the script to a file, read it, then execute
+> it locally (the "from a clone" steps below do exactly that).
+
+#### Windows (PowerShell)
+
+```powershell
+cd C:\path\to\autocrypt
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+What it does:
+
+1. Locates a real Python (drops the "Run as alias" Store stubs).
+2. Creates a dedicated virtualenv at `C:\Users\<you>\.autocrypt\venv`
+   (override the location with `$env:AUTOCRYPT_HOME`).
+3. Installs the package *editable* from this repo.
+4. Writes `<venv>\autocrypt.json` recording the repo path (used by `--update`).
+5. Adds `<venv>\Scripts` to your **User PATH** (persistent; new terminals pick
+   it up). Idempotent — safe to re-run at any time.
+
+Open a **new** terminal and verify:
+
+```
+autocrypt --help
+autocrypt message.txt        # solves the bundled sample in the repo root
+```
+
+#### Linux / macOS (bash)
+
+```bash
+cd /path/to/autocrypt
+bash install.sh
+```
+
+Same steps; the venv goes to `~/.autocrypt/venv`, and a guarded
+`export PATH="...:$PATH"` line is appended to `~/.profile`, `~/.bashrc`
+and/or `~/.zshrc` (only if not already present). Re-source a profile or open a
+new shell, then:
+
+```
+autocrypt --help
+```
+
+#### Uninstall
+
+Delete `~/.autocrypt` (`%USERPROFILE%\.autocrypt`), remove the PATH entries the
+installer added, and optionally `pip uninstall autocrypt`. Both installers print
+exact uninstall instructions when they finish.
+
+### Self-update
+
+An installed `autocrypt` can update itself at any time:
+
+```
+autocrypt --update     # long form
+autocrypt -update      # single-dash alias
+```
+
+The one-liner installers (`curl … | bash` / `irm … | iex`) give you an install
+that is fully self-updateable — you never need to re-run the installer to get
+new fixes. Just run `autocrypt --update` whenever you want the latest build:
+
+```
+autocrypt --update     # pulls latest source + reinstalls (if needed)
+autocrypt --version    # confirm the new version
+autocrypt --help       # confirm the command still works
+```
+
+Behavior:
+
+- The updater detects how the install was created: a git checkout (walks parent
+  directories for `.git`), the installer-written `<venv>/autocrypt.json`, or a
+  pip vcs/archive install.
+- For a git checkout it runs `git fetch` + `git pull --ff-only` and reinstalls
+  if the install is non-editable. It **refuses to run on a dirty working tree**
+  (uncommitted changes) — commit or stash first.
+- Only non-destructive commands are ever executed (`git fetch`,
+  `git pull --ff-only`, `pip install --upgrade`).
+- If the install was created some other way, it prints the correct manual
+  command instead of guessing.
+
+### Repository layout
+
+```
+autocrypt/            the importable package (cli, core, ui, scoring, solvers*,
+                      challenge, filetypes, stego, lattice, czroots, explain,
+                      watcher, updater, _version, __main__)
+tools/                dev utilities (make_fixtures.py, e3_section.py, …)
+tests/                regression suites (test_*.py)
+fixtures/             deterministically generated fixtures (make_fixtures.py)
+real_challenges/      real CTF challenges + honest benchmark (BENCHMARK.md)
+docs/                 scoring & solver documentation
+archive_scratch/      frozen dev scratch / tools_dev
+install.sh, install.ps1   platform installers
+pyproject.toml        packaging (console script: autocrypt = "autocrypt.cli:main")
+```
+
+From a source checkout *without* installing, the equivalent command is
+`python -m autocrypt.cli <file> [options]` run in the repo root.
+
 ### Invocation
 
 ```
-python3 autocrypt.py <file> [--json] [--verbose] [--top N] [--timeout S]
-                     [--jobs N] [--strict] [--flag-format RE]
-                     [--explain] [--fast] [--deep]
+autocrypt <file>... [options]
 ```
 
-- Multi-file input (`challenge.py output.txt`) is merged by static AST parsing —
-  challenge `.py` files are never executed.
-- `--json` emits `{status, failures, first_exact, results}`.
-- `--verbose` explains accept/reject and prints per-solver timings.
-- `--strict` (or `AUTOCRYPT_STRICT=1`): any unexpected solver exception
-  (NameError, TypeError, …) makes the run exit non-zero after finishing.
-- `--explain` prints a plain-English sentence under each ranked result explaining
-  how each chain layer was decoded/broken.
-- `--fast` cuts time roughly in half (shorter per-solver slices) and skips the
-  most expensive brute-force solvers (DLP smoothing, Hill-2×2, Enigma, hash
-  cracking, Vigenère brute). Use when you want a quick answer.
-- `--deep` doubles per-solver time and allows a deeper layered decode search
-  (max depth 6 → 9) for stubborn multi-layer challenges.
+`<file>` may be plain data (`.txt`, binary, image, …) and/or a challenge `.py`
+generator. Multi-file input (`challenge.py output.txt`) is merged by static AST
+parsing — challenge `.py` files are never executed, only read.
+
+| Option | Meaning |
+|---|---|
+| `--top N` | show at most N ranked results (default 200) |
+| `--timeout S` | global time budget in seconds (default 20) |
+| `-j N, --jobs N` | worker processes (default `min(cpu_count,8)`; 1 = sequential) |
+| `--json` | emit machine-readable JSON `{status, failures, first_exact, results}` |
+| `--verbose` | explain each accept/reject and print per-solver timings |
+| `--strict` | exit non-zero after finishing if any unexpected solver exception occurred (same as `AUTOCRYPT_STRICT=1`) |
+| `--explain` | print a plain-English sentence under each ranked result |
+| `--flag-format RE` | regex used for early/direct flag detection |
+| `--wordlist WORDLIST` | wordlist for hash / JWT-secret cracking |
+| `--known-plaintext CRIB` | known plaintext crib |
+| `--params PARAMS` | RSA parameters, e.g. `n=...,e=...,c=...` |
+| `--fast` | ~half the time: shorter per-solver slices, skip the slowest brute-force solvers |
+| `--deep` | 2× per-solver time + deeper layered decode search (max depth 6→9) |
+| `--no-color` | disable ANSI colors |
+| `--update` / `-update` | self-update (see above) |
+
+Examples:
+
+```
+autocrypt message.txt
+autocrypt --json --top 5 --explain challenge.py output.txt
+autocrypt --timeout 60 --deep stubborn_input.txt
+```
 
 ## Real CTF challenges (`.py` + `output.txt`)
 
@@ -85,7 +259,7 @@ CTF crypto challenges usually ship a generator/encryption script plus captured
 output. autocrypt ingests both in one invocation, e.g.:
 
 ```
-python3 autocrypt.py real_challenges/sumoprimes/gen.py real_challenges/sumoprimes/output.txt
+autocrypt real_challenges/sumoprimes/gen.py real_challenges/sumoprimes/output.txt
 ```
 
 The `.py` file is parsed statically (never executed): label-carrying `print()`
@@ -136,7 +310,9 @@ only in the source. Real curated challenges live under `real_challenges/` (see
 
 ## Tests (regression suites)
 
-All `test_*.py` suites live in `tests/` and are run from the repo root:
+All `test_*.py` suites live in `tests/` and are run from the repo root. Use the
+repo's own interpreter (`.venv/Scripts/python.exe` on Windows,
+`.venv/bin/python` on POSIX) or any `python3` ≥ 3.12:
 
 ```
 bash run_tests.sh                # 43-case table (strict mode on) + optional AES/Fernet SKIP rows
@@ -157,11 +333,12 @@ python3 archive_scratch/tools_dev/rsa_battery.py  # 11 raw RSA attack classes (b
 ```
 
 Standalone diagnostics / dev tools (fuzz, flakecheck, rsa_battery, diag, …)
-live under `archive_scratch/tools_dev/` to keep the root clean.
+live under `archive_scratch/tools_dev/` (and `tools/`) to keep the root clean.
 
 All fixtures under `fixtures/` are generated deterministically by
-`make_fixtures.py` (fixed seeds). Challenge pairs use synthetic flags marked as
-such; the flag is never shipped inside a pair (real challenges read `flag.txt`).
+`tools/make_fixtures.py` (fixed seeds). Challenge pairs use synthetic flags
+marked as such; the flag is never shipped inside a pair (real challenges read
+`flag.txt`).
 Real, third-party CTF challenges — the honest benchmark — live under
 `real_challenges/`, with per-challenge run results in
 `real_challenges/BENCHMARK.md`.

@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import re
 
-from core import solver
-from scoring import assess, quadgram_score, flag_plausibility, english_confidence
-import solvers as S
+from autocrypt.core import solver
+from autocrypt.scoring import assess, quadgram_score, flag_plausibility, english_confidence
+import autocrypt.solvers as S
 
 _BASE26 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 _KEYS = [

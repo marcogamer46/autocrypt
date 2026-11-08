@@ -1,9 +1,9 @@
 """Extra compact solvers: more RSA cases, Rabin, Hill 2x2, Ook!, big-int -> bytes."""
 from __future__ import annotations
 import math, re, itertools
-from core import solver
-from scoring import assess, quadgram_score, plain_text_score, leet_body_dict_fraction, english_confidence
-import solvers as S
+from autocrypt.core import solver
+from autocrypt.scoring import assess, quadgram_score, plain_text_score, leet_body_dict_fraction, english_confidence
+import autocrypt.solvers as S
 
 
 def _txt(d):
@@ -317,7 +317,7 @@ def factor_all(n, ctx):
             d = r if r * r == x else None
             if not d:
                 try:
-                    from solvers import _pm1_with_checkpoints
+                    from autocrypt.solvers import _pm1_with_checkpoints
                     d = _pm1_with_checkpoints(x, 131_072, ctx)
                 except Exception:
                     d = None

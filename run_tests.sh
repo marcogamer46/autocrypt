@@ -13,12 +13,13 @@ elif command -v python3 >/dev/null 2>&1; then
 else
   PY=python
 fi
+export PYTHONPATH="$PWD"
 TMP="$PWD/fixtures"
 # Generate fixtures on demand if the repo fixtures/ folder is missing or
 # incomplete (deterministic: make_fixtures.py uses fixed seeds).
 if [ ! -f "$TMP/enigma_direct.txt" ] || [ ! -f "$TMP/rsa_even.txt" ]; then
   echo "fixtures/ missing or incomplete - regenerating..."
-  $PY make_fixtures.py || { echo "fixture generation failed"; exit 1; }
+  $PY tools/make_fixtures.py || { echo "fixture generation failed"; exit 1; }
 fi
 PASS=0; FAIL=0; TOTAL=0
 printf "%-34s %-6s %8s\n" "CASE" "STATUS" "SECONDS"
@@ -29,7 +30,7 @@ run_case() {
   TOTAL=$((TOTAL+1))
   local start=$(date +%s%N)
   local out
-  out=$(timeout 25 $PY autocrypt.py "$file" $args 2>&1)
+  out=$(timeout 25 $PY -m autocrypt.cli "$file" $args 2>&1)
   local rc=$?
   local end=$(date +%s%N)
   local secs=$(awk -v a="$start" -v b="$end" 'BEGIN { printf "%.1f", (b-a)/1000000000 }')
@@ -93,7 +94,7 @@ for REC_CASE in "real_seq|$TMP/real_seq/sequences.py|academy{g2_real_seq}" \
                 "seq_synth|$TMP/sequences_synth.py|academy{g2_synth}"; do
   IFS='|' read -r REC_NAME REC_FILE REC_EXPECT <<< "$REC_CASE"
   REC_START=$(date +%s%N)
-  REC_OUT=$(timeout 70 $PY autocrypt.py "$REC_FILE" --timeout 60 2>&1)
+  REC_OUT=$(timeout 70 $PY -m autocrypt.cli "$REC_FILE" --timeout 60 2>&1)
   REC_RC=$?
   REC_END=$(date +%s%N)
   REC_SECS=$(awk -v a="$REC_START" -v b="$REC_END" 'BEGIN { printf "%.1f", (b-a)/1000000000 }')
@@ -109,7 +110,7 @@ done
 
 # negative recurrence: no modulus, huge N -> must exit within budget, no fake flag
 NEG2_START=$(date +%s%N)
-NEG2_OUT=$(timeout 25 $PY autocrypt.py "$TMP/sequences_neg.py" --timeout 20 2>&1)
+NEG2_OUT=$(timeout 25 $PY -m autocrypt.cli "$TMP/sequences_neg.py" --timeout 20 2>&1)
 NEG2_RC=$?
 NEG2_END=$(date +%s%N)
 NEG2_SECS=$(awk -v a="$NEG2_START" -v b="$NEG2_END" 'BEGIN { printf "%.1f", (b-a)/1000000000 }')
@@ -125,7 +126,7 @@ TOTAL=$((TOTAL+1))
 # Negative DLP: safe-prime composite must finish within the budget WITHOUT
 # producing the fake flag (a hang or a wrong solve is a failure).
 NEG_START=$(date +%s%N)
-NEG_OUT=$(timeout 25 $PY autocrypt.py "$TMP/dlp_neg_safe.txt" --timeout 20 2>&1)
+NEG_OUT=$(timeout 25 $PY -m autocrypt.cli "$TMP/dlp_neg_safe.txt" --timeout 20 2>&1)
 NEG_RC=$?
 NEG_END=$(date +%s%N)
 NEG_SECS=$(awk -v a="$NEG_START" -v b="$NEG_END" 'BEGIN { printf "%.1f", (b-a)/1000000000 }')

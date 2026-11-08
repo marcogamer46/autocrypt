@@ -19,8 +19,8 @@ sys.path.insert(0, str(ROOT))
 def _run(args, timeout=60):
     PY = sys.executable
     return subprocess.run(
-        [PY, str(ROOT / "autocrypt.py")] + args,
-        capture_output=True, text=True, timeout=timeout)
+        [PY, "-m", "autocrypt.cli"] + args,
+        capture_output=True, text=True, timeout=timeout, cwd=str(ROOT))
 
 
 def main():

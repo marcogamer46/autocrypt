@@ -2,8 +2,9 @@
 """Naive-recurrence check for the G2 fast matrix path."""
 import sys, random
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from solvers import _g2_recurrence
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from autocrypt.solvers import _g2_recurrence
 
 def naive(rec, N, M):
     k = max(rec["coeffs"].keys())

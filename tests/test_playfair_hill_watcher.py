@@ -10,13 +10,13 @@ import sys
 import time
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(HERE))
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
-from core import Context
-from solvers import _playfair_decrypt, _playfair_worker, solve_playfair
-from solvers_more import _A, solve_hill2
-import watcher
+from autocrypt.core import Context
+from autocrypt.solvers import _playfair_decrypt, _playfair_worker, solve_playfair
+from autocrypt.solvers_more import _A, solve_hill2
+import autocrypt.watcher as watcher
 
 _FLAG_RE = re.compile(r"\w{1,40}\{.*?\}")
 

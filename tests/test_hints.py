@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 E3 = ROOT / "fixtures" / "e3"
 
 sys.path.insert(0, str(ROOT))
-import challenge  # noqa: E402
+import autocrypt.challenge as challenge  # noqa: E402
 
 EXPECTED = [
     ("c02", "shift=7"),

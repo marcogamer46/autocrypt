@@ -12,6 +12,7 @@ import sys
 import time
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import test_hexfamily as H
 
@@ -140,9 +141,9 @@ class Gen:
 
 def run_case(data):
     Path("tm.txt").write_bytes(data)
-    r = subprocess.run([sys.executable, "autocrypt.py", "tm.txt",
+    r = subprocess.run([sys.executable, "-m", "autocrypt.cli", "tm.txt",
                         "--timeout", "15", "--json"],
-                       capture_output=True, text=True, timeout=40)
+                       capture_output=True, text=True, timeout=40, cwd=str(ROOT))
     if "AUTO_DEBUG_FAM" in __import__("os").environ:
         print("[famdbg] rc", r.returncode, "stdout:", repr(r.stdout[:160]), file=sys.stderr)
     try:

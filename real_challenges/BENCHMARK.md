@@ -8,7 +8,7 @@
 
 | Tool | Installed? | Method / notes |
 |---|---|---|
-| **autocrypt** | Yes | repo CLI: `.venv/Scripts/python.exe autocrypt.py <file> --timeout N`. Runs from repo root. |
+| **autocrypt** | Yes | repo CLI: `.venv/Scripts/python.exe -m autocrypt.cli <file> --timeout N`. Runs from repo root. |
 | **RsaCtfTool** | Yes | `pip install rsactftool` **failed** (no such PyPI distribution). Installed via `pip install git+https://github.com/RsaCtfTool/RsaCtfTool.git` into `.venv_bench/`. Entry point `RsaCtfTool.exe`. |
 | **Ciphey** | **No** | `pip install ciphey` **failed to install.** Hard dependency `cipheycore>=0.3.2,<0.4.0` ships binary wheels only up to CPython 3.9 and has **no sdist**; this machine has only Python 3.12 (no older interpreter, no Rust toolchain to build from source). PyPI wheel of ciphey 5.14.0 is present, but its dependency cannot resolve on 3.12. Ciphey is therefore recorded as **N/A** everywhere — no results fabricated. |
 
@@ -63,7 +63,7 @@ Challenge files live under `real_challenges/<name>/`. Expected flags are the off
 
 ```bash
 # autocrypt
-.venv/Scripts/python.exe autocrypt.py real_challenges/<name>/<file> --timeout 25 --top 5
+.venv/Scripts/python.exe -m autocrypt.cli real_challenges/<name>/<file> --timeout 25 --top 5
 
 # RsaCtfTool (installed in .venv_bench)
 .venv_bench/Scripts/RsaCtfTool.exe -n <N> -e <E> --decrypt <C> --attack cube_root --timeout 60

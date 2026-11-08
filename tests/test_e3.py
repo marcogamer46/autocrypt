@@ -33,10 +33,10 @@ CASES = [
 
 
 def run(*paths):
-    args = [sys.executable, "autocrypt.py"] + [str(p) for p in paths] + \
+    args = [sys.executable, "-m", "autocrypt.cli"] + [str(p) for p in paths] + \
         ["--timeout", "30", "--json", "--top", "6"]
     t0 = time.time()
-    r = subprocess.run(args, capture_output=True, text=True, timeout=90)
+    r = subprocess.run(args, capture_output=True, text=True, timeout=90, cwd=str(ROOT))
     wall = time.time() - t0
     try:
         out = json.loads(r.stdout or "[]")

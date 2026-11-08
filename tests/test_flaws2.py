@@ -11,8 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from solvers_more import factor_all, _pm1, _pp1, _rho, _is_prime
-from core import Context
+from autocrypt.solvers_more import factor_all, _pm1, _pp1, _rho, _is_prime
+from autocrypt.core import Context
 
 # Deterministic runs: seed RNG so results are reproducible across machines.
 random.seed(20261108)

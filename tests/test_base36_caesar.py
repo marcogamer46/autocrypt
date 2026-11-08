@@ -19,9 +19,9 @@ EXPECTED_FLAG = "flag{0lly_1s_th3_w3st3rosi_brutu5}"
 
 def solver_direct():
     """Unit-style: call the solver directly and require the exact flag."""
-    import solvers
-    from core import Context
-    from scoring import assess
+    import autocrypt.solvers as solvers
+    from autocrypt.core import Context
+    from autocrypt.scoring import assess
     import time
     data = CHALLENGE.read_bytes()
     ctx = Context(deadline=time.monotonic() + 20, flag_regex=None,
@@ -40,9 +40,10 @@ def solver_direct():
 
 def pipeline_engages():
     """The full pipeline should at least engage the base36-caesar chain."""
-    args = [sys.executable, "autocrypt.py", str(CHALLENGE), "--timeout", "30",
+    args = [sys.executable, "-m", "autocrypt.cli", str(CHALLENGE), "--timeout", "30",
             "--json", "--top", "8"]
-    r = subprocess.run(args, capture_output=True, text=True, timeout=120)
+    r = subprocess.run(args, capture_output=True, text=True, timeout=120,
+                       cwd=str(ROOT))
     if not r.stdout:
         return False, "no json output"
     import json

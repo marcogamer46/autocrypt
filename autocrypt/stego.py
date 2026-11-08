@@ -11,9 +11,9 @@ import re
 import struct
 import zlib
 
-from core import solver
-from scoring import assess
-import filetypes
+from autocrypt.core import solver
+from autocrypt.scoring import assess
+import autocrypt.filetypes as filetypes
 
 try:
     from PIL import Image, ExifTags

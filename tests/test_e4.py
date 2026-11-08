@@ -15,6 +15,7 @@ import sys
 import time
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import test_rsamultiprimefamily as M  # noqa: E402  (reuse rprime/flag)
 
@@ -76,9 +77,9 @@ def run_case_multi(data, src, timeout=20):
     """Run autocrypt on a multi-file pair (source + output) via tmp files."""
     Path("tm_e4.py").write_bytes(src)
     Path("tm_e4.txt").write_bytes(data or b"")
-    r = subprocess.run([sys.executable, "autocrypt.py", "tm_e4.py", "tm_e4.txt",
+    r = subprocess.run([sys.executable, "-m", "autocrypt.cli", "tm_e4.py", "tm_e4.txt",
                         "--timeout", str(timeout), "--json"],
-                       capture_output=True, text=True, timeout=60)
+                       capture_output=True, text=True, timeout=60, cwd=str(ROOT))
     try:
         out = json.loads(r.stdout or "[]")
         if isinstance(out, dict):

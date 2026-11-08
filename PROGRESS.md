@@ -2,6 +2,48 @@
 
 ## where we are (2026-11-08, ultracode continuation) — COMPLETE
 
+User request (this round): "organize files into folders; install script for
+Windows and Linux so `autocrypt` works on any terminal; `autocrypt -update`
+self-update; update README (curl/irm one-liners, wiki, how to update,
+commands)".
+
+Done:
+- **Package layout**: the ~20 flat runtime modules moved into `autocrypt/`
+  (git mv + import rewrites); dev tools moved to `tools/`; added
+  `autocrypt/__init__.py`, `_version.py` (0.1.0), `__main__.py` (`python -m
+  autocrypt`), `updater.py`. `pyproject.toml` now uses `packages=["autocrypt"]`,
+  dynamic version from `autocrypt._version.__version__`, console script
+  `autocrypt = "autocrypt.cli:main"`.
+- **Updater** `autocrypt/updater.py`: dispatches on how the install was made
+  (git checkout via parent-walk `.git` detection, installer venv config at
+  `<venv>/autocrypt.json`, or pip vcs/editable install); refuses dirty git
+  trees; only non-destructive commands (`git fetch`/`git pull --ff-only`,
+  `pip install --upgrade`). Wired into the CLI as `--update` (alias `-update`).
+- **Installers**: `install.sh` (Linux/macOS) and `install.ps1` (Windows) create
+  `~/.autocrypt/venv`, `pip install -e .`, persist PATH (guarded rc lines /
+  user env var), write `<venv>/autocrypt.json` recording the repo path for
+  `--update`. Idempotent; safe to re-run.
+- **Tests**: all `tests/` migrated to package-qualified imports and
+  `[sys.executable, "-m", "autocrypt.cli", ...]` with `cwd=str(ROOT)`.
+- **Wiki**: 11-page beginner-friendly hub under `docs/wiki/` (index, overview,
+  quickstart, how-it-works, architecture, cli, scoring, solvers,
+  adding-a-solver, testing, faq). All links verified to resolve.
+- **README**: one-liner installers (`curl -fsSL … | bash` / `irm … | iex`),
+  Windows/Linux install steps, self-update section, common-commands
+  cheat-sheet, full CLI options table, repo layout, tests section.
+- **Substitution-wordlist regression fixed**: `_load_sub_dict()` was looking for
+  `english_words.txt` inside the package dir after the restructure (wordlist is
+  at repo root) → now resolves package dir / repo root / CWD.
+- **Adversarial review fixes** (ultracode workflow): fixed 7 confirmed findings
+  in the updater (mis-dispatch, exit codes, Windows file:// path), installers
+  (swallowed pull failures, unescaped JSON, Python version gate), and added a
+  real `--version` CLI flag (see LOGS S38.11).
+- **Final baseline**: `run_tests.sh` **43/43 PASS**; standalone suite 33/34
+  (only `test_flaws2` = BKLG-22, 18 pre-existing p−1/p+1 flaws — not a
+  regression). Substitution-wordlist regression test passes.
+
+## Previous note (reviewer-feedback round) — COMPLETE
+
 Reviewer-feedback round (structure + honest benchmark) is done. Repo
 restructure: all 34 `test_*.py` moved into `tests/` (git mv + path-bootstrap
 rewrites), standalone dev/diag tools moved to `archive_scratch/tools_dev/`,

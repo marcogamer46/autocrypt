@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import math
 
-import czroots
+import autocrypt.czroots as czroots
 
 # Rational arithmetic for Gram–Schmidt. gmpy2's mpq is ~5x faster than the
 # fractions.Fraction implementation on the big-integer lattices used by

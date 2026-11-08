@@ -251,8 +251,8 @@ _HELP = {
 }
 
 def _help():
-    import solvers
-    from core import REGISTRY
+    import autocrypt.solvers
+    from autocrypt.core import REGISTRY
     lines = (f"{x.name}: {d} Example: {e}" for x in REGISTRY
              for d, e in [_HELP.get(x.name, ("Registered solver.", "unknown ciphertext"))])
     print(box("Solver help", list(lines), color="cyan"))
@@ -410,7 +410,8 @@ def interactive():
                 data = _paste()
                 last.update(notes=[], source="")
             elif choice in ("2", "f"):
-                import shlex, challenge
+                import shlex
+                import autocrypt.challenge as challenge
                 raw = input("File path(s) — data .txt and/or challenge .py (space-separated): ").strip()
                 try:
                     data, notes, source = challenge.load(shlex.split(raw))

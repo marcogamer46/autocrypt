@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from explain import explain_chain  # noqa: E402
+from autocrypt.explain import explain_chain  # noqa: E402
 
 # (chain, expected-substring)
 CASES = [
@@ -38,11 +38,11 @@ def main():
     # CLI smoke: real Sum-O-Primes must show an explanation line under its rank.
     PY = sys.executable
     r = subprocess.run(
-        [PY, str(ROOT / "autocrypt.py"),
+        [PY, "-m", "autocrypt.cli",
          str(ROOT / "real_challenges" / "sumoprimes" / "gen.py"),
          str(ROOT / "real_challenges" / "sumoprimes" / "output.txt"),
          "--top", "1", "--timeout", "12", "--explain"],
-        capture_output=True, text=True, timeout=60)
+        capture_output=True, text=True, timeout=60, cwd=str(ROOT))
     out = r.stdout
     if "RSA broken via p+q leak" in out:
         print("PASS  CLI --explain (Sum-O-Primes) shows p+q explanation")

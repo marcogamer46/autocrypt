@@ -1,6 +1,6 @@
 [project]
 name = "autocrypt"
-version = "0.1.0"
+dynamic = ["version"]
 description = "CLI CTF crypto auto-solver: fingerprints unknown blobs and runs a best-first layered decode search over ciphers, encodings, and exact math attacks."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -19,17 +19,14 @@ classifiers = [
 dependencies = []  # stdlib only; optional crypto libs are never required
 
 [project.scripts]
-autocrypt = "autocrypt:main"
+autocrypt = "autocrypt.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = [
-    "autocrypt", "core", "ui", "challenge", "scoring", "stego", "lattice",
-    "czroots", "filetypes", "explain",
-    "solvers", "solvers_extra", "solvers_mega", "solvers_more",
-    "solvers_pack3", "solvers_pack5", "solvers_pack6", "solvers_pack7",
-    "solvers_plus", "make_fixtures",
-]
+packages = ["autocrypt"]
+
+[tool.setuptools.dynamic]
+version = {attr = "autocrypt._version.__version__"}

@@ -44,9 +44,9 @@ def enc(flag, key):
 
 def solver_direct():
     """Call the solver directly on the raw letter stream."""
-    import solvers
-    from core import Context
-    from scoring import assess
+    import autocrypt.solvers as solvers
+    from autocrypt.core import Context
+    from autocrypt.scoring import assess
     import time
     data = enc(FLAG, KEY).encode()
     ctx = Context(deadline=time.monotonic() + 20, flag_regex=None,
@@ -73,9 +73,10 @@ def pipeline_engages():
         fh.write(formatted + "\n")
         path = fh.name
     try:
-        args = [sys.executable, "autocrypt.py", path, "--timeout", "120",
+        args = [sys.executable, "-m", "autocrypt.cli", path, "--timeout", "120",
                 "--json", "--top", "8"]
-        r = subprocess.run(args, capture_output=True, text=True, timeout=180)
+        r = subprocess.run(args, capture_output=True, text=True, timeout=180,
+                           cwd=str(ROOT))
         if not r.stdout:
             return False, "no json output"
         import json

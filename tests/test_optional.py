@@ -13,7 +13,8 @@ import sys
 import time
 from pathlib import Path
 
-TMP = Path(__file__).resolve().parents[1] / "fixtures"
+ROOT = Path(__file__).resolve().parent.parent
+TMP = ROOT / "fixtures"
 TMP.mkdir(parents=True, exist_ok=True)
 
 
@@ -22,8 +23,8 @@ def run_autocrypt(data: bytes, expect: str, timeout=25):
     f.write_bytes(data)
     t0 = time.monotonic()
     out = subprocess.run(
-        [sys.executable, "autocrypt.py", str(f), "--timeout", "15"],
-        capture_output=True, text=True, timeout=timeout)
+        [sys.executable, "-m", "autocrypt.cli", str(f), "--timeout", "15"],
+        capture_output=True, text=True, timeout=timeout, cwd=str(ROOT))
     secs = time.monotonic() - t0
     return expect in out.stdout, secs
 

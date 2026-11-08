@@ -12,7 +12,9 @@ import string
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
+ROOT = Path(__file__).resolve().parent.parent
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -52,8 +54,8 @@ def test_substitution_wordlist():
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(body)
         r = subprocess.run(
-            [sys.executable, "autocrypt.py", path, "--timeout", "25", "--json"],
-            cwd=HERE, capture_output=True, text=True, timeout=90)
+            [sys.executable, "-m", "autocrypt.cli", path, "--timeout", "25", "--json"],
+            cwd=str(ROOT), capture_output=True, text=True, timeout=90)
         out = None
         if r.stdout.strip():
             import json

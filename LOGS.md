@@ -469,3 +469,29 @@ Addressed an external reviewer's three points: (1) fixture circularity, (2) a
   BKLG-22) — not a regression (it crashed at HEAD).
 - S37.3 Committed restructure+benchmark+docs as `582e823`; pushed to
   origin/main. AUTO_MODE.md Last activity updated.
+
+### Session 38 (2026-11-08) — organize into folders + installers + --update
+
+User request: clean up the flat root (.py files outside folders), add Windows &
+Linux installers so `autocrypt` is a global command, and add
+`autocrypt -update` self-update.
+
+| Step | What changed | Files | Verified |
+|------|--------------|-------|----------|
+| S38.1 | **Package restructure**: moved the ~20 flat runtime modules into `autocrypt/` (git mv + import rewrites to `autocrypt.*`); dev tools to `tools/`. Added `__init__.py`, `_version.py` (0.1.0), `__main__.py` (`python -m autocrypt`), `updater.py`. | autocrypt/, tools/ | `python -m autocrypt.cli --help` runs |
+| S38.2 | **Packaging**: pyproject.toml now `packages=["autocrypt"]`, dynamic version from `autocrypt._version.__version__`, console script `autocrypt = "autocrypt.cli:main"`. Editable reinstall succeeds (0.1.0). | pyproject.toml | pip install -e . |
+| S38.3 | **Import fixes** found by smoke-testing: `__import__("autocrypt.scoring")` returned the root package (not the submodule) → switched to `importlib.import_module`; and submodule imports (`import autocrypt.challenge/ui/filetypes/czroots/lattice`) didn't bind the short name callers use → aliased. | core.py, solvers.py, cli.py, ui.py, stego.py, lattice.py | run_tests.sh 43/43 PASS |
+| S38.4 | **Updater** `autocrypt/updater.py`: dispatches on install type (git checkout via parent-walk `.git`, installer venv config `<venv>/autocrypt.json`, pip vcs). Dirty-tree guard; only non-destructive commands. Wired as `--update` (alias `-update`). | updater.py, cli.py | `autocrypt --update` refuses on dirty tree (exit 1); alias works |
+| S38.5 | **Installers**: `install.sh` (Linux/macOS) + `install.ps1` (Windows): venv at `~/.autocrypt/venv` (override `AUTOCRYPT_HOME`), `pip install -e .`, persist PATH, write `<venv>/autocrypt.json` for --update. | install.sh, install.ps1 | mechanics validated; BOM-safe config read |
+| S38.6 | **Tests migrated** (parallel workflow, 9 groups + verify): all `tests/` → package-qualified imports and `[sys.executable, "-m", "autocrypt.cli", ...]` with `cwd=str(ROOT)`. Follow-up fix: un-aliased `import autocrypt.solvers/challenge/ui/watcher` in 7 test files → `as <short>` (same binding bug as S38.3). | tests/* | see below |
+| S38.7 | **Docs**: README expanded (prereqs, Windows/Linux install, self-update, repo layout, full CLI options table); BENCHMARK/run_tests paths updated. | README.md, real_challenges/BENCHMARK.md | — |
+
+### Session 38 results (filled in, 2026-11-08)
+
+| Step | What changed | Files | Verified |
+|------|--------------|-------|----------|
+| S38.8 | **Fixed substitution-wordlist regression** (post-restructure): `_load_sub_dict()` looked for `english_words.txt` inside the package dir (`autocrypt/english_words.txt`), but the wordlist lives at the repo root → the OSError was swallowed and the dictionary came back empty, so the monoalphabetic-dictionary solver silently yielded nothing. Now resolves the wordlist against the package dir, repo root, and CWD. | solvers.py | `test_substitution_wordlist` passes; dictionary loads 89,229 patterns / 370,046 words |
+| S38.9 | **README: "how to update and some commands"** — added a Common-commands cheat-sheet (solve, --top, --json, --fast/--deep, challenge.py+output, dev commands) and expanded the Self-update section to show the `--update` → `--version` → `--help` loop; noted the one-liner installs are fully self-updateable. | README.md | rendered |
+| S38.10 | **Full suite verification** post-fix: `run_tests.sh` 43/43 PASS; all standalone `tests/test_*.py` re-run (see below). | — | 43/43 + standalone suite |
+
+| S38.11 | **Adversarial review fixes** (ultracode workflow, 24 agents): confirmed 7 findings and fixed all. (1) Updateers: `do_update()` no longer treats any ancestor `.git` as a checkout — it consults the installer config and pip metadata first (mis-dispatch fix); editable/unknown-source no-update path now returns exit 1, not 0; Windows `file://` URL parsing via `urllib.request.url2pathname` (was `Path(url[8:])` → bogus `\C:\...`). (2) Installers: `git pull --ff-only` failures are now fatal (were swallowed with `|| true` / missing `$LASTEXITCODE`), so a diverged clone can't silently install stale code; `install.sh` now writes `autocrypt.json` via Python's `json.dump` (was raw `printf`, producing invalid JSON for paths with quotes/backslashes); PS1 `Get-RealPython` now picks the first candidate that actually meets the Python ≥3.12 gate instead of returning the first existing path then failing. (3) CLI: added a real `--version` flag (README documented it but it didn't exist). | updater.py, cli.py, install.sh, install.ps1 | stand: suite 33/34 (only BKLG-22), 43-case table re-run |

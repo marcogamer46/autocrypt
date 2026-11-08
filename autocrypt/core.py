@@ -6,6 +6,7 @@ import collections
 import concurrent.futures
 import hashlib
 import heapq
+import importlib
 import math
 import os
 import re
@@ -14,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Iterable
 
-from scoring import (has_partial_english, flag_plausibility, is_flagish,
+from autocrypt.scoring import (has_partial_english, flag_plausibility, is_flagish,
                      english_confidence, clear_english, leet_body_dict_fraction)
 
 # Transpositions only reorder letters: if the input is already flag-shaped, a
@@ -146,8 +147,8 @@ def _solver_worker(args):
     os.environ["AUTOCRYPT_WORKER"] = "1"
     import re as _re
     name, blob, depth, deadline, flag_pattern, flag_explicit, known_plaintext, wordlist, rsa_params = args
-    import core as _core
-    import solvers  # noqa: F401  register registry
+    import autocrypt.core as _core
+    import autocrypt.solvers  # noqa: F401  register registry
     ctx = _core.Context(
         deadline=deadline,
         flag_regex=_re.compile(flag_pattern, _re.DOTALL),
@@ -155,7 +156,7 @@ def _solver_worker(args):
         known_plaintext=known_plaintext,
         wordlist=wordlist,
         rsa_params=rsa_params,
-        assess=None if False else __import__("scoring").assess)
+        assess=importlib.import_module("autocrypt.scoring").assess)
     solver = next((s for s in _core.REGISTRY if s.name == name), None)
     if solver is None:
         return name, [], "solver not found"
@@ -419,7 +420,7 @@ def fingerprint(data: bytes) -> dict:
         hashes.append("SHA-256")
     elif re.fullmatch(rb"\$2[aby]\$\d\d\$[./A-Za-z0-9]{53}", data.strip()):
         hashes.append("bcrypt")
-    from filetypes import detect_filetype
+    from autocrypt.filetypes import detect_filetype
     filetype = detect_filetype(data)
     if filetype and filetype not in magic:
         magic.append(filetype)
@@ -489,7 +490,7 @@ def _consistent_flag_recovery(method_base, params, data_text, candidate):
         if base in ("beaufort", "porta"):
             key = params.get("key", "")
             try:
-                from solvers_pack7 import _beaufort_decrypt, _porta_decrypt
+                from autocrypt.solvers_pack7 import _beaufort_decrypt, _porta_decrypt
                 # For Porta which is self-inverse; Beaufort forward:
                 # c = (k - p) % 26.
                 if base == "porta":
@@ -509,7 +510,7 @@ def _consistent_flag_recovery(method_base, params, data_text, candidate):
 def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> SearchResult:
     """Best-first layered decode search, bounded by depth, time, and content hashes."""
     # Importing registers built-in solvers while keeping this module reusable.
-    import solvers  # noqa: F401
+    import autocrypt.solvers  # noqa: F401
 
     heap: list[tuple[float, int, bytes, tuple[str, ...], float, int]] = []
     serial = 0

@@ -12,8 +12,8 @@ import re
 import string
 import zipfile
 
-from core import solver
-from scoring import assess
+from autocrypt.core import solver
+from autocrypt.scoring import assess
 
 
 def _prior(fp, *names, default=0.0):

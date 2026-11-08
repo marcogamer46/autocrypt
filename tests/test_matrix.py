@@ -1,5 +1,8 @@
 import sys
 import base64, subprocess, sys, codecs, string, math
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
 P = "TTFCTFGGH{n0t_eng1ish_zq7x_k9}"
 def shift(t,k):
     return "".join(chr((ord(c)-65+k)%26+65) if c.isupper() else chr((ord(c)-97+k)%26+97) if c.islower() else c for c in t)
@@ -59,7 +62,7 @@ for n,c in cases.items():
     if only and n not in only: continue
     open("tm.txt","w").write(c)
     try:
-        r=subprocess.run([sys.executable, "autocrypt.py","tm.txt","--timeout","15","--json"],capture_output=True,text=True,timeout=40)
+        r=subprocess.run([sys.executable, "-m","autocrypt.cli","tm.txt","--timeout","15","--json"],capture_output=True,text=True,timeout=40,cwd=str(ROOT))
         import json
         out=json.loads(r.stdout or "[]")
         if isinstance(out, dict): out=out.get("results", [])

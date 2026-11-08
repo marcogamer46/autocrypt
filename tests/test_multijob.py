@@ -37,11 +37,11 @@ MAX_WORKERS = 4
 def run(path, jobs):
     """Return (error, rows). rows = list of (chain, plaintext) for top 3.
     error is None on success, else a short diagnostic string."""
-    args = [sys.executable, "autocrypt.py", str(path), "--timeout", str(TIMEOUT_S),
+    args = [sys.executable, "-m", "autocrypt.cli", str(path), "--timeout", str(TIMEOUT_S),
             "--json", "--top", "3", "--jobs", str(jobs)]
     try:
         r = subprocess.run(args, capture_output=True, text=True,
-                            timeout=SUBPROC_TIMEOUT)
+                            timeout=SUBPROC_TIMEOUT, cwd=str(ROOT))
     except subprocess.TimeoutExpired:
         return "TIMEOUT", None
     try:

@@ -7,10 +7,10 @@ import math
 import re
 import string
 
-from core import solver
-from scoring import assess, plain_text_score
-import solvers as S
-import solvers_more as SM  # late-bound: breaks the solvers<->solvers_more import cycle
+from autocrypt.core import solver
+from autocrypt.scoring import assess, plain_text_score
+import autocrypt.solvers as S
+import autocrypt.solvers_more as SM  # late-bound: breaks the solvers<->solvers_more import cycle
 
 
 def _bits_to_bytes(bits, n=8):

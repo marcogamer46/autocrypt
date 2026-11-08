@@ -1,12 +1,14 @@
 import sys, subprocess, json, base64
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parent.parent
 
 def check(name, data, expect):
     open("tm.txt", "w").write(data)
-    r = subprocess.run([sys.executable, "autocrypt.py", "tm.txt",
+    r = subprocess.run([sys.executable, "-m", "autocrypt.cli", "tm.txt",
                         "--timeout", "15", "--json", "--top", "5"],
-                       capture_output=True, text=True, timeout=40)
+                       capture_output=True, text=True, timeout=40,
+                       cwd=str(ROOT))
     try:
         out = json.loads(r.stdout or "[]")
         if isinstance(out, dict):

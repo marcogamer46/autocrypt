@@ -8,6 +8,7 @@ import collections
 import gzip
 import hashlib
 import hmac
+import importlib
 import itertools
 import json
 import math
@@ -20,8 +21,8 @@ import time
 import urllib.parse
 import zlib
 
-from core import solver
-from scoring import (assess, quadgram_score, quadgram_log, word_initial_log,
+from autocrypt.core import solver
+from autocrypt.scoring import (assess, quadgram_score, quadgram_log, word_initial_log,
                      word_final_log, WORDS, _COMMON, flag_plausibility,
                      english_confidence, leet_body_dict_fraction, plain_text_score,
                      dictionary_fraction, clear_english)
@@ -1556,10 +1557,25 @@ def _load_sub_dict():
     global _SUB_DICT_PATTERNS, _SUB_DICT_WORDS
     if _SUB_DICT_PATTERNS is not None:
         return _SUB_DICT_PATTERNS
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "english_words.txt")
+    package_dir = os.path.dirname(os.path.abspath(__file__))
+    # After the package restructure the wordlist lives in the repo root (the
+    # package dir's parent), not inside the package. Try both, plus CWD.
+    candidates = [
+        os.path.join(package_dir, "english_words.txt"),
+        os.path.join(os.path.dirname(package_dir), "english_words.txt"),
+        os.path.join(os.getcwd(), "english_words.txt"),
+    ]
+    for cand in candidates:
+        if os.path.isfile(cand):
+            path = cand
+            break
+    else:
+        path = None
     patterns = collections.defaultdict(list)
     words = set()
     try:
+        if path is None:
+            raise OSError("english_words.txt not found")
         with open(path, encoding="utf-8", errors="ignore") as f:
             for line in f:
                 w = line.strip().lower()
@@ -1849,11 +1865,11 @@ def solve_xor_single(data, ctx):
             yield _xor(data, bytes([k])), "single-byte XOR", {"key": f"0x{k:02x}"}, sc
 
 
-_UNI_OK = [u != -math.inf for u in __import__("scoring")._UNI]
+_UNI_OK = [u != -math.inf for u in importlib.import_module("autocrypt.scoring")._UNI]
 
 
 def plain_text_score_byte(b):
-    return __import__("scoring")._UNI[b]
+    return importlib.import_module("autocrypt.scoring")._UNI[b]
 
 
 def _hamming(a, b):
@@ -2868,7 +2884,7 @@ def _factor(n, ctx):
         return p, n // p
     # Last resort: the full factor_all pipeline (pm1/pp1/rho/batched ECM).
     try:
-        from solvers_more import factor_all
+        from autocrypt.solvers_more import factor_all
         fa = factor_all(n, ctx)
         if fa and len(fa) == 2:
             a, b = list(fa)
@@ -2936,7 +2952,7 @@ def _recover_p_partial(n, p_high, ctx):
     if n <= 1 or not p_high or p_high >= n:
         return None
     try:
-        import lattice
+        import autocrypt.lattice as lattice
     except Exception:
         return None
     nbits = n.bit_length()
@@ -3187,15 +3203,15 @@ def solve_rsa(data, ctx):
 
 # More encodings/ciphers and image/file steganography, kept in their own
 # modules; importing here registers them into the same REGISTRY.
-import solvers_extra  # noqa: E402,F401
-import stego  # noqa: E402,F401
-import solvers_mega  # noqa: E402,F401
-import solvers_more  # noqa: E402,F401
-import solvers_plus  # noqa: E402,F401
-import solvers_pack3  # noqa: E402,F401
-import solvers_pack5  # noqa: E402,F401
-import solvers_pack6  # noqa: E402,F401
-import solvers_pack7  # noqa: E402,F401
+import autocrypt.solvers_extra  # noqa: E402,F401
+import autocrypt.stego  # noqa: E402,F401
+import autocrypt.solvers_mega  # noqa: E402,F401
+import autocrypt.solvers_more  # noqa: E402,F401
+import autocrypt.solvers_plus  # noqa: E402,F401
+import autocrypt.solvers_pack3  # noqa: E402,F401
+import autocrypt.solvers_pack5  # noqa: E402,F401
+import autocrypt.solvers_pack6  # noqa: E402,F401
+import autocrypt.solvers_pack7  # noqa: E402,F401
 
 
 # ------------------------------------------------ G2: linear recurrence + derived key
@@ -3675,7 +3691,7 @@ def _ph_dlp_prime(g, h, r, ctx):
         mod.append(qe)
     if not rem:
         return None
-    from solvers import _crt
+    from autocrypt.solvers import _crt
     x = _crt(rem, mod)
     if x is not None and pow(g, x, r) == h % r:
         return x % ordg
@@ -3713,14 +3729,14 @@ def solve_dlp_composite_smooth(data, ctx):
     g = v.get("g")
     if not n or c is None:
         return
-    from solvers_more import _is_prime
+    from autocrypt.solvers_more import _is_prime
     if _is_prime(n):
         return
     if g is None:
         base_hyp = [2, 3, 5, 7, 11, 13]
     else:
         base_hyp = [g]
-    from solvers_more import factor_all
+    from autocrypt.solvers_more import factor_all
     factor = None
     _ladder_start = time.monotonic()
     for B in (4096, 16384, 65536, 131072, 262144):

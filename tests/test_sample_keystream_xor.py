@@ -16,9 +16,9 @@ EXPECTED_FLAG = "flag{xor_is_the_new_aes}"
 
 
 def pipeline():
-    args = [sys.executable, "autocrypt.py", str(CHALLENGE), "--timeout", "30",
+    args = [sys.executable, "-m", "autocrypt.cli", str(CHALLENGE), "--timeout", "30",
             "--json", "--top", "5"]
-    r = subprocess.run(args, capture_output=True, text=True, timeout=120)
+    r = subprocess.run(args, cwd=str(ROOT), capture_output=True, text=True, timeout=120)
     if not r.stdout:
         return False, "no json output"
     import json

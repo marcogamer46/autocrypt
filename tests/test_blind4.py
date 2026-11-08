@@ -15,6 +15,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+ROOT = Path(__file__).resolve().parent.parent
+
 rng = random.Random(20270901)  # blind seed 4
 
 LEET_WORDS = ["c0de", "fl4g", "s3cr3t", "k3y", "x0r", "l33t", "h4ck",
@@ -134,9 +136,9 @@ def rsa_micro_flag():
 
 def run_case(data_bytes):
     Path("tm.txt").write_bytes(data_bytes)
-    r = subprocess.run([sys.executable, "autocrypt.py", "tm.txt",
+    r = subprocess.run([sys.executable, "-m", "autocrypt.cli", "tm.txt",
                         "--timeout", "15", "--json"],
-                       capture_output=True, text=True, timeout=40)
+                       capture_output=True, text=True, timeout=40, cwd=str(ROOT))
     try:
         import json
         out = json.loads(r.stdout or "[]")

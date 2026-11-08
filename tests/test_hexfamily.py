@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parent.parent
 
 LEET_WORDS = ["c0de", "fl4g", "s3cr3t", "k3y", "x0r", "l33t", "h4ck",
                "c1ph3r", "r3v", "pwn", "m1sc", "w3b", "n0t", "eng1ish",
@@ -113,9 +114,10 @@ class Gen:
 
 def run_case(data_bytes, timeout=15):
     Path("tm.txt").write_bytes(data_bytes)
-    r = subprocess.run([sys.executable, "autocrypt.py", "tm.txt",
+    r = subprocess.run([sys.executable, "-m", "autocrypt.cli", "tm.txt",
                         "--timeout", str(timeout), "--json"],
-                       capture_output=True, text=True, timeout=40)
+                       capture_output=True, text=True, timeout=40,
+                       cwd=str(ROOT))
     try:
         out = json.loads(r.stdout or "[]")
         if isinstance(out, dict):
