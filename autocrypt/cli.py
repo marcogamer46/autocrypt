@@ -97,6 +97,12 @@ def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=200,
                       "confidence": s, "is_flag": False, "_reason": "exact linear-recurrence recovery"}
                      for o, m, p, s in _items]
             _exact_res = SearchResult(_recs, "FOUND", ctx.failures)
+            # Mirror the main search loop's exact-recovery bookkeeping so the
+            # JSON `first_exact` field and --verbose "verified exact" line work
+            # on this fast path too.
+            ctx.exact_found = True
+            ctx.exact_time = time.monotonic()
+            ctx.exact_chain = _recs[0]["chain"] if _recs else ""
     if _exact_res is not None:
         res = _exact_res
         if ctx.pool is not None:
@@ -130,7 +136,13 @@ def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=200,
         return r["confidence"] < .6
     kept = [r for r in res if not _junk(r)]
     if len(kept) != len(res):
-        res = type(res)(kept, res.status if kept else "NOT_FOUND", res.failures)
+        # Preserve TIMEOUT / SOLVER_FAILED signals rather than erasing them
+        # when junk-filtering empties the results (previously everything was
+        # flattened to NOT_FOUND, hiding that the run timed out or a solver
+        # failed).
+        new_status = res.status if kept else (
+            res.status if res.status in ("TIMEOUT", "SOLVER_FAILED") else "NOT_FOUND")
+        res = type(res)(kept, new_status, res.failures)
     if verbose:
         for r in res:
             print(f"[verbose] kept: {r['chain']} (confidence {r['confidence']}, "
@@ -147,7 +159,8 @@ def build_parser():
     p.add_argument("file", nargs="*", default=["-"],
                    help="input path(s): data .txt and/or the challenge .py (static analysis, never run); - for stdin")
     p.add_argument("--flag-format", default=r"\w{1,40}\{.*?\}", help="regex used for early flag detection")
-    p.add_argument("--top", type=int, default=200, help="maximum text results")
+    p.add_argument("--top", type=int, default=200,
+                   help="number of ranked results to report (default 200)")
     p.add_argument("--timeout", type=float, default=20.0, help="global time budget in seconds")
     p.add_argument("-j", "--jobs", type=int, default=None,
                    help="worker processes (default: min(cpu_count,8); 1 = sequential)")
@@ -200,8 +213,10 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.update:
         return _self_update()
-    if args.top < 0 or args.timeout <= 0:
-        build_parser().error("--top must be nonnegative and --timeout must be positive")
+    if args.top < 0:
+        build_parser().error(f"--top must be nonnegative (got {args.top})")
+    if args.timeout <= 0:
+        build_parser().error(f"--timeout must be positive (got {args.timeout})")
     if args.no_color:
         import autocrypt.ui as ui
         ui.COLOR_ENABLED = False
@@ -243,12 +258,32 @@ def main(argv=None):
         payload = {
             "status": results.status,
             "failures": results.failures,
+            "elapsed_seconds": round(time.monotonic() - ctx.search_t0, 3),
+            "solver_times": {name: round(dt, 3) for name, dt in sorted(
+                ctx.solver_times.items(), key=lambda kv: -kv[1])},
             "first_exact": round(ctx.exact_time - ctx.search_t0, 2)
             if getattr(ctx, "exact_found", False) and ctx.exact_time else None,
-            "results": [{key: result.get(key) for key in
-                         ("chain", "plaintext", "confidence", "is_flag", "_reason")}
-                        for result in results],
+            "fingerprint": {
+                "length": fp["length"],
+                "entropy": round(fp["entropy"], 4),
+                "charset": fp["charset"],
+                "ic": round(fp["ic"], 4),
+                "classes": fp["classes"],
+                "magic": fp["magic"],
+                "hashes": fp["hashes"],
+                "hypotheses": [[name, prior] for name, prior in fp["hypotheses"]],
+            },
+            "notes": list(notes),
+            "findings": list(dict.fromkeys(ctx.findings)),
+            "results": [],
         }
+        for result in results:
+            r = {key: result.get(key) for key in
+                 ("chain", "plaintext", "confidence", "is_flag", "_reason")}
+            if args.explain:
+                from autocrypt.explain import explain_chain
+                r["explanation"] = list(explain_chain(result["chain"]))
+            payload["results"].append(r)
         print(json.dumps(payload, ensure_ascii=False))
         return 3 if ctx.strict and ctx.strict_failed else 0
 

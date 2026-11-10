@@ -648,3 +648,22 @@ Linux installers so `autocrypt` is a global command, and add
   - Tests: `tests/test_updater.py` extended with an untracked-file-accepted
     case and a tracked-modification-still-refuses case.
   - Version bumped `0.5.0` → `0.6.0` (`autocrypt/_version.py`).
+
+- S40.8 CLI/JSON reporting improvements + README UI note (`autocrypt/cli.py`,
+  `README.md`). Items were surfaced by an adversarial multi-agent audit (all
+  verified against source).
+  - `--json` now emits the full fingerprint block (length/entropy/charset/ic/
+    classes/magic/hashes/hypotheses), notes, findings, overall elapsed time
+    (`elapsed_seconds`) and per-solver timings (`solver_times`) — the help
+    text promised "(all fields)" but the payload had omitted them.
+  - `--json --explain` now includes a per-result `explanation` list (the
+    explanation path previously only ran in text mode).
+  - `first_exact` is now populated on the exact linear-recurrence fast path
+    (it set `ctx.exact_found`/`exact_time`).
+  - Junk-filtering preserves `TIMEOUT`/`SOLVER_FAILED` status instead of
+    flattening everything to `NOT_FOUND`.
+  - `--top`/`--timeout` validation errors now name the offending flag and
+    value; `--top` help clarified.
+  - README documents that a bare `autocrypt` (no args, TTY) opens the
+    interactive UI.
+  - Version bumped `0.6.0` → `0.7.0` (`autocrypt/_version.py`).

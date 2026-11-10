@@ -485,3 +485,13 @@ a non-standard generator or malformed data. See LOGS S40.3.
 - `tests/test_updater.py` extended: untracked-file-accepted case, and a
   tracked-modification-still-refuses case.
 - Version 0.6.0.
+
+## Session 40.8 — CLI/JSON reporting improvements + README UI note
+- `--json` now includes the fingerprint block, notes, findings,
+  `elapsed_seconds`, and `solver_times` (the help promised "all fields").
+- `--json --explain` adds per-result explanations; `first_exact` works on the
+  exact LRR fast path; junk-filtering preserves TIMEOUT/SOLVER_FAILED status.
+- `--top`/`--timeout` validation errors name the offending flag; `--top`
+  help clarified.
+- README documents the interactive UI via a bare `autocrypt` (no args, TTY).
+- All CLI/UI/explain/e3/e4 regressions pass. Version 0.7.0.

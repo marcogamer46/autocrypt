@@ -63,6 +63,7 @@ input -> fingerprint(data) -> best-first layered decode search (autocrypt/core.p
 ### Common commands (cheat-sheet)
 
 ```
+autocrypt                            # open the interactive UI (no file args, TTY)
 autocrypt --help                    # full CLI reference
 autocrypt --update                  # self-update to the latest source
 autocrypt message.txt               # solve a single blob/file
@@ -79,10 +80,16 @@ autocrypt challenge.py output.txt   # solve a CTF challenge (.py + captured outp
 For development from a source checkout (no install needed):
 
 ```
+python -m autocrypt.cli             # interactive UI (same as bare `autocrypt`)
 python -m autocrypt.cli message.txt # run the CLI directly from the repo root
 bash run_tests.sh                   # run the regression table (43 cases)
 python3 tests/test_matrix.py --both # exhaustive matrix checks
 ```
+
+> **Interactive UI.** With no file arguments and a terminal attached (a TTY),
+> a bare `autocrypt` launches an interactive session: paste or type the data
+> you want analyzed, and pick from the ranked recovery chains it finds. This
+> is the same `autocrypt` command as everything above — just omit the file.
 
 ### Installation
 
