@@ -227,38 +227,69 @@ def _ecm(n, ctx, B1=50000, max_curves=12):
 
 
 def _pm1(n, B=200_000):
-    a = 2
-    for j in range(2, B):
-        a = pow(a, j, n)
-        if j % 1000 == 0:
-            g = math.gcd(a - 1, n)
-            if 1 < g < n:
-                return g
-    g = math.gcd(a - 1, n)
-    return g if 1 < g < n else None
+    """Pollard's p-1; returns a nontrivial factor of n or None.
+
+    The classic loop a <- a^j mod n for j=2..B yields a = 2^(B!).  If BOTH
+    prime factors p,q satisfy p-1 | B! and q-1 | B!, the final gcd(a-1, n)
+    collapses to the trivial n and no factor is found.
+
+    gcd(a-1, n) is nonzero from the first bound that reaches the smoother of
+    the two factors (monotonic), so when the full bound degenerates to n we
+    binary-search the smallest bound with a nonzero gcd: at that bound exactly
+    one factor is smooth, giving a proper divisor.
+    """
+    if n % 2 == 0:
+        return 2
+
+    def _gcd_at(b):
+        a = 2
+        g = 0
+        for j in range(2, b + 1):
+            a = pow(a, j, n)
+            if j % 1000 == 0:
+                g = math.gcd(a - 1, n)
+                if 1 < g < n:
+                    return g, True
+        g = math.gcd(a - 1, n)
+        return g, (1 < g < n)
+
+    g, found = _gcd_at(B)
+    if found:
+        return g
+    if g == 1:
+        return None
+    # g == n: both factors smooth at B -> binary-search first nonzero bound.
+    lo, hi = 2, B
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if _gcd_at(mid)[0] != 1:
+            hi = mid
+        else:
+            lo = mid + 1
+    g2, _ = _gcd_at(lo)
+    return g2 if 1 < g2 < n else None
 
 
-_PP1_M = None
+_PP1_M = {}
 
 
-def _pp1_moment():
-    """M = product of q^floor(log_q B) over primes q <= B (B matches p-1)."""
-    global _PP1_M
-    if _PP1_M is None:
-        B = 200_000
-        sieve = bytearray(b"\x01") * (B + 1)
-        sieve[0] = sieve[1] = 0
-        for i in range(2, int(B ** 0.5) + 1):
-            if sieve[i]:
-                sieve[i * i::i] = bytearray(len(sieve[i * i::i]))
-        M = 1
-        for q in (i for i in range(2, B + 1) if sieve[i]):
-            e = 1
-            while q ** (e + 1) <= B:
-                e += 1
-            M *= q ** e
-        _PP1_M = M
-    return _PP1_M
+def _pp1_moment(B=200_000):
+    """M(B) = product of q^floor(log_q B) over primes q <= B."""
+    if B in _PP1_M:
+        return _PP1_M[B]
+    sieve = bytearray(b"\x01") * (B + 1)
+    sieve[0] = sieve[1] = 0
+    for i in range(2, int(B ** 0.5) + 1):
+        if sieve[i]:
+            sieve[i * i::i] = bytearray(len(sieve[i * i::i]))
+    M = 1
+    for q in (i for i in range(2, B + 1) if sieve[i]):
+        e = 1
+        while q ** (e + 1) <= B:
+            e += 1
+        M *= q ** e
+    _PP1_M[B] = M
+    return M
 
 
 def _v_mod(P, M, n):
@@ -279,13 +310,22 @@ def _pp1(n, ctx):
     """
     if n % 2 == 0:
         return 2
-    M = _pp1_moment()
-    for P in (2, 3, 5, 7, 11, 13, 17, 19):
+    B = 200_000
+    while B >= 2:
         if ctx.expired():
             return None
-        g = math.gcd(_v_mod(P, M, n) - 2, n)
-        if 1 < g < n:
-            return g
+        M = _pp1_moment(B)
+        first_g = 0
+        for P in (2, 3, 5, 7, 11, 13, 17, 19):
+            g = math.gcd(_v_mod(P, M, n) - 2, n)
+            if 1 < g < n:
+                return g
+            if P == 2:
+                first_g = g
+        if first_g == n:
+            B >>= 1
+            continue
+        break
     return None
 
 

@@ -602,3 +602,20 @@ Linux installers so `autocrypt` is a global command, and add
     filtered by core retention); skipped a redundant RSA prime-power solver
     (main RSA solver already handles n=p²).
   - Version bumped `0.2.0` → `0.3.0` (`autocrypt/_version.py`).
+
+- S40.5 Fixed 18 factoring defects in `autocrypt/solvers_more.py` (Pollard
+  p-1 and Williams p+1) surfaced by `tests/test_flaws2.py`.
+  - Root cause: when BOTH prime factors p,q satisfy the smoothness condition
+    (p-1 | B! and q-1 | B!, resp. p+1 | M and q+1 | M), the final
+    `gcd(a-1, n)` / `gcd(V_M-2, n)` collapses to the trivial n and the
+    primitive returned None, silently failing to find any factor.
+  - p-1 fix (`_pm1`): the gcd is nonzero from the first bound that reaches the
+    smoother factor, so when the full bound degenerates to n we binary-search
+    the smallest bound with a nonzero gcd — at that bound exactly one factor
+    is smooth and the gcd is a proper divisor.
+  - p+1 fix (`_pp1` + parameterised `_pp1_moment(B)`): retry on shrinking
+    bounds to split the two smooth factors.
+  - Result: `test_flaws2.py` now reports  0 flaws (exit 0); `test_flaws.py`
+    also 0 flaws. No regressions in RSA/factoring families (rsa_extra PASS,
+    rsamultiprimefamily 10/10, medium pack & optional PASS).
+  - Version bumped `0.3.0` → `0.4.0` (`autocrypt/_version.py`).

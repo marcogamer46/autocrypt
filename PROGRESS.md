@@ -452,3 +452,11 @@ a non-standard generator or malformed data. See LOGS S40.3.
   CBC/CTR, ASCII key, label mismatch, and a no-crypto prose sniff.
 - All pass; full suite shows no regressions (three failures confirmed
   pre-existing against HEAD).
+
+## Session 40.5 — Fix Pollard p-1 / p+1 trivial-gcd failures
+- `test_flaws2.py` reported 18 defects (8 p-1, 10 p+1): both factors smooth
+  -> gcd == n -> None. Rewrote `_pm1` with a binary search on the first bound
+  yielding a nonzero gcd (there exactly one factor is smooth -> proper factor),
+  and `_pp1`/`_pp1_moment(B)` with shrinking-bound retry.
+- `test_flaws2.py` and `test_flaws.py` both now clean (0 flaws, exit 0).
+- Factoring/RSA families re-verified green; no regressions.
