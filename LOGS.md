@@ -712,3 +712,15 @@ Linux installers so `autocrypt` is a global command, and add
     caesar->caesar, affine->caesar — all fail at baseline, pass now).
     Encoding-variants and targeted regressions stay green.
   - Version bumped `0.8.0` → `0.9.0` (`autocrypt/_version.py`).
+
+- S40.11 Redesigned UI banner; stable version tag; update changelog display
+  (`autocrypt/ui.py`, `autocrypt/updater.py`).
+  - The interactive banner now renders `AutoCRYPT` in the Big Money-se FIGlet
+    font (the exact style the user picked from patorjk.com/taag).
+  - The header line is now just `autocrypt <version>` (was the hardcoded
+    `autocrypt v1.1 — CTF crypto triage`); `ui.VERSION` now reads the real
+    package `__version__` from `_version.py` instead of a stale literal.
+  - `autocrypt --update` now prints a "what's new" section after a successful
+    git update, pulled from the newest LOGS.md changelog entry.
+  - Tests: updater + UI-safety suites stay green.
+  - Version bumped `0.9.0` → `0.10.0` (`autocrypt/_version.py`).

@@ -47,6 +47,28 @@ def _run(cmd, cwd=None):
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
 
 
+def _print_whats_new(root: Path):
+    """Print the newest changelog section from ``LOGS.md`` after an update.
+
+    LOGS.md appends one section per release, so the newest notes are at the
+    end. If the file is missing/unreadable, stay silent (the version delta is
+    still reported).
+    """
+    try:
+        txt = (root / "LOGS.md").read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return
+    lines = txt.splitlines()
+    markers = [i for i, ln in enumerate(lines)
+               if ln.startswith("- S40.") or ln.startswith("## Session")]
+    start = markers[-1] if markers else max(0, len(lines) - 12)
+    section = "\n".join(lines[start:]).strip()
+    if not section:
+        return
+    print("autocrypt: what's new (LOGS.md):")
+    print(section[:1200])
+
+
 def current_version():
     try:
         from importlib.metadata import version
@@ -138,6 +160,7 @@ def _update_git(root: Path):
               "'pip install --upgrade .' from the repo to finish.", file=sys.stderr)
         return 1
     print(f"autocrypt: updated from {old} -> {current_version() or up[:7]}.")
+    _print_whats_new(root)
     return 0
 
 

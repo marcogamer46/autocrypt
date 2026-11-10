@@ -12,7 +12,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "1.1"
+from ._version import __version__ as VERSION
 _ANSI = {"cyan": "\033[36m", "green": "\033[32m", "yellow": "\033[33m",
          "red": "\033[31m", "dim": "\033[90m", "reset": "\033[0m"}
 
@@ -50,14 +50,19 @@ def banner(width=None):
     width = max(1, width or _width())
     if width >= 40:
         art = [
-            "  _   _ _   _ _____ ___  ____  _____",
-            " /_\\ | | | | |_   _/ _ \\|  _ \\|_   _|",
-            "/ _ \\| |_| | | | || (_) | |_) | | |",
-            "/_/ \\_\\___/|_| |_| \\___/|  __/  |_|",
+            "  ______               __                 ______   _______  __      __  _______  ________",
+            " /      \\             |  \\               /      \\ |       \\|  \\    /  \\|       \\|        \\",
+            "|  $$$$$$\\ __    __  _| $$_     ______  |  $$$$$$\\| $$$$$$$\\\\$$\\  /  $$| $$$$$$$\\\\$$$$$$$$",
+            "| $$__| $$|  \\  |  \\|   $$ \\   /      \\ | $$   \\$$| $$__| $$ \\$$\\/  $$ | $$__/ $$  | $$",
+            "| $$    $$| $$  | $$ \\$$$$$$  |  $$$$$$\\| $$      | $$    $$  \\$$  $$  | $$    $$  | $$",
+            "| $$$$$$$$| $$  | $$  | $$ __ | $$  | $$| $$   __ | $$$$$$$\\   \\$$$$   | $$$$$$$   | $$",
+            "| $$  | $$| $$__/ $$  | $$|  \\| $$__/ $$| $$__/  \\| $$  | $$   | $$    | $$        | $$",
+            "| $$  | $$ \\$$    $$   \\$$  $$ \\$$    $$ \\$$    $$| $$  | $$   | $$    | $$        | $$",
+            " \\$$   \\$$  \\$$$$$$     \\$$$$   \\$$$$$$   \\$$$$$$  \\$$   \\$$    \\$$     \\$$         \\$$",
         ]
     else:
         art = ["autocrypt"]
-    tag = f"autocrypt v{VERSION} — CTF crypto triage"
+    tag = f"autocrypt {VERSION}"
     tag = tag.encode("ascii", "replace").decode("ascii")
     lines = [_fit(line, width) for line in art]
     lines.extend(_fit(line, width) for line in textwrap.wrap(tag, width=max(1, width)))

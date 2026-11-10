@@ -520,3 +520,11 @@ a non-standard generator or malformed data. See LOGS S40.3.
   `TIMEOUT_PARTIAL` when no gated result exists.
 - New `tests/test_classical_stacking.py` (3 stacks, all fail at baseline).
   Encoding-variants + targeted regressions green. Version 0.9.0.
+
+## Session 40.11 — UI banner + version tag; update changelog display
+- Banner now renders `AutoCRYPT` in Big Money-se FIGlet font (patorjk style).
+- Header line simplified to `autocrypt <version>`; UI now reads the real
+  `__version__` from `_version.py` (was hardcoded `v1.1`).
+- `autocrypt --update` prints the newest LOGS.md changelog section after a
+  successful git update ("what's new").
+- Updater + UI-safety suites green. Version 0.10.0.
