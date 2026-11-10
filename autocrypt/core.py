@@ -398,6 +398,42 @@ def fingerprint(data: bytes) -> dict:
     ):
         if label in classes:
             hypotheses[label] = prior
+    # Embedded-run detection: a base64 payload may sit inside surrounding
+    # prose (labels, narrations, terse wrappers). The full-buffer checks above
+    # only accept an all-base64 blob, so scan for maximal alphabet runs and
+    # credit a base64 hypothesis when any run genuinely decodes to readable
+    # bytes. We add to `hypotheses` only (not `classes`) to leave other
+    # solvers' geometry unchanged. False positives on prose are prevented by
+    # requiring (a) a digit or non-alphabetic alphabet char in the run, and
+    # (b) a decode that is >= 70% printable (English-as-base64 yields quasi-
+    # random bytes, ~37% printable, so it fails the bar).
+    if "base64" not in hypotheses:
+        for _rx in (re.compile(r"[A-Za-z0-9+/]{16,}"),
+                    re.compile(r"[A-Za-z0-9_-]{16,}")):
+            for _run in _rx.finditer(compact):
+                _t = _run.group(0)
+                if not any(c.isdigit() or c in "+/-_" for c in _t):
+                    continue
+                _pad = _t + "=" * ((-len(_t)) % 4)
+                try:
+                    _dec = base64.b64decode(_pad.encode("ascii"), validate=True)
+                except Exception:
+                    _dec = None
+                if _dec is None and ("-" in _t or "_" in _t):
+                    try:
+                        _dec = base64.urlsafe_b64decode(_pad.encode("ascii"))
+                    except Exception:
+                        _dec = None
+                if _dec is None or len(_dec) < 8:
+                    continue
+                if sum(32 <= b < 127 for b in _dec) < 0.7 * len(_dec):
+                    continue
+                hypotheses["base64"] = 0.60
+                if "+" not in _t and "/" not in _t:
+                    hypotheses.setdefault("base64url", 0.52)
+                break
+            if "base64" in hypotheses:
+                break
     magic = []
     if data.startswith(b"\x1f\x8b"):
         magic.append("gzip")

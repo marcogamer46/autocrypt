@@ -460,3 +460,17 @@ a non-standard generator or malformed data. See LOGS S40.3.
   and `_pp1`/`_pp1_moment(B)` with shrinking-bound retry.
 - `test_flaws2.py` and `test_flaws.py` both now clean (0 flaws, exit 0).
 - Factoring/RSA families re-verified green; no regressions.
+
+## Session 40.6 — Embedded base64-run extraction
+- `solve_base64` missed base64 payloads wrapped in prose (labels/narrations):
+  the fingerprint only classified all-base64 blobs, so the solver's prior was
+  0 and it never ran.
+- `core.fingerprint` now credits a base64 hypothesis when a maximal alphabet
+  run decodes to readable bytes; guarded against prose false-positives (run
+  must have a digit / non-alphabetic char, and decode must be >= 70% printable).
+- `solve_base64` gains an embedded-run fallback scanning the raw buffer
+  (whitespace intact, so prose stays split into short runs).
+- Fixed an int-vs-bytes bug in the new solver path.
+- New `tests/test_base64_embedded.py` (standard + url-safe embedded recovery,
+  prose negative-control). All encoding/UI/factoring regressions pass.
+- Version 0.5.0.

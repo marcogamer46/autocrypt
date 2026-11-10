@@ -619,3 +619,21 @@ Linux installers so `autocrypt` is a global command, and add
     also 0 flaws. No regressions in RSA/factoring families (rsa_extra PASS,
     rsamultiprimefamily 10/10, medium pack & optional PASS).
   - Version bumped `0.3.0` → `0.4.0` (`autocrypt/_version.py`).
+
+- S40.6 Added embedded base64-run extraction (`autocrypt/solvers.py`
+  `solve_base64` + `autocrypt/core.py` `fingerprint`).
+  - Gap: a base64 payload wrapped in prose (labels/narrations) was invisible —
+    the fingerprint only classified all-base64 blobs (`re.fullmatch`), so the
+    solver's prior was 0 and it never ran.
+  - `fingerprint` now scans for maximal alphabet runs and credits a base64
+    hypothesis when a run genuinely decodes to readable bytes, with two guards
+    against prose false-positives: the run must contain a digit or
+    non-alphabetic alphabet char, and its decode must be >= 70% printable
+    (English-as-base64 yields ~37% printable, so it fails).
+  - `solve_base64` gains an embedded-run fallback that scans the raw buffer
+    (whitespace intact so prose stays split into short runs) and decodes each
+    qualifying run independently.
+  - Fixed an int-vs-bytes bug in the new solver path (`c.isdigit()` on bytes).
+  - Tests: new `tests/test_base64_embedded.py` (standard + url-safe embedded
+    recovery, and a prose negative-control that emits no base64 chain).
+  - Version bumped `0.4.0` → `0.5.0` (`autocrypt/_version.py`).

@@ -244,6 +244,35 @@ def solve_base64(data, ctx):
                     yield from _emit(ctx, out, "base64url" if url else "base64")
             except (binascii.Error, ValueError):
                 continue
+    # Embedded-run extraction: a base64 payload frequently sits inside a larger
+    # buffer with non-base64 prose around it (labels, narrations, terse
+    # wrappers). When whole-blob decode surfaces nothing, scan for maximal
+    # contiguous alphabet runs and try each as a standalone payload.
+    if not seen:
+        # Scan the raw buffer WITHOUT collapsing whitespace: the trailing/
+        # leading prose stays split into short word-runs (which can't reach
+        # the minimum length), while a payload that is one contiguous token
+        # still forms a single long run.
+        b64_run = re.compile(rb"[A-Za-z0-9+/]{16,}")
+        b64url_run = re.compile(rb"[A-Za-z0-9_-]{16,}")
+        for blob in blobs:
+            for url, rx in ((False, b64_run), (True, b64url_run)):
+                for tok in rx.finditer(blob):
+                    t = tok.group(0)
+                    # A genuine payload run carries digits or non-alphabetic
+                    # alphabet chars; a pure-letter run is usually prose.
+                    # (`t` is bytes, so iterate ints.)
+                    if not any(0x30 <= c <= 0x39 or c in b"+/-_" for c in t):
+                        continue
+                    try:
+                        padded = t + b"=" * ((-len(t)) % 4)
+                        out = base64.urlsafe_b64decode(padded) if url else base64.b64decode(padded, validate=True)
+                    except (binascii.Error, ValueError):
+                        continue
+                    if not out or len(out) < 8 or out in seen:
+                        continue
+                    seen.add(out)
+                    yield from _emit(ctx, out, "base64url" if url else "base64")
     # A base64 payload whose direct decode is opaque (non-text) may be a
     # letter-shifted alphabet (e.g. caesar over base64, as in c08's
     # ct = caesar(b64)); try each shift and surface any printable decode so
