@@ -667,3 +667,21 @@ Linux installers so `autocrypt` is a global command, and add
   - README documents that a bare `autocrypt` (no args, TTY) opens the
     interactive UI.
   - Version bumped `0.6.0` → `0.7.0` (`autocrypt/_version.py`).
+
+- S40.9 Detect base32hex / Crockford; swapped-case base64 fallback
+  (`autocrypt/core.py` `fingerprint`, `autocrypt/solvers.py` `solve_base64`).
+  - Audit finding: `base32hex`, `crockford`, `swapped-case base64`, `z85`
+    were referenced as known decoders but never produced by the fingerprint,
+    so they were not surfaced/prioritized (only reachable via generic
+    catch-all solvers). (z85 already has a dedicated solver matcher at 0.7,
+    so it was left as-is to avoid fingerprint noise.)
+  - `fingerprint` now detects `base32hex` and `crockford` with an unambiguous
+    rule: the whole buffer matches the variant alphabet AND contains a digit
+    (0/1/8/9) that standard base32 rejects. Each gets a 0.70 hypothesis.
+  - `solve_base64` gains a case-swapped-alphabet fallback so a whole blob
+    whose lower/upper cases are swapped decodes through the base64 path.
+  - Tests: new `tests/test_encoding_variants.py` (base32hex, Crockford,
+    swapped-case base64 recovery; fingerprint class emission; prose
+    negative-control with no spurious variant classes). hexfamily 10/10 and
+    the targeted regression set stay green.
+  - Version bumped `0.7.0` → `0.8.0` (`autocrypt/_version.py`).

@@ -273,6 +273,21 @@ def solve_base64(data, ctx):
                         continue
                     seen.add(out)
                     yield from _emit(ctx, out, "base64url" if url else "base64")
+    # A case-swapped alphabet (lower/upper positions exchanged) defeats both the
+    # standard and URL-safe decoders; retry the whole blob with every letter's
+    # case flipped as a final fallback.
+    if not seen:
+        t = re.sub(rb"\s+", b"", data)
+        if t:
+            padded = t.swapcase() + b"=" * ((-len(t)) % 4)
+            try:
+                out = base64.b64decode(padded, validate=True)
+            except (binascii.Error, ValueError):
+                out = None
+            if out and len(out) >= 4 \
+                    and sum(32 <= b < 127 for b in out) >= 0.7 * len(out):
+                seen.add(out)
+                yield from _emit(ctx, out, "base64 (swapcase)")
     # A base64 payload whose direct decode is opaque (non-text) may be a
     # letter-shifted alphabet (e.g. caesar over base64, as in c08's
     # ct = caesar(b64)); try each shift and surface any printable decode so

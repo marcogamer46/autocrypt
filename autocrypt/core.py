@@ -349,6 +349,18 @@ def fingerprint(data: bytes) -> dict:
             classes.append("base64")
         if re.fullmatch(r"[A-Z2-7]+=*\s*", text.upper()) and len(compact) >= 8:
             classes.append("base32")
+        # base32hex / Crockford base32 variants use alphabets that are
+        # supersets of standard base32 but include the digit characters
+        # 0/1/8/9 (absent from standard base32), so a whole-buffer match that
+        # contains one of those is unambiguous.
+        _u = compact.upper()
+        if len(_u) >= 8 and re.fullmatch(r"[0-9A-V]+", _u) \
+                and any(c in "0189" for c in _u):
+            classes.append("base32hex")
+        _cck = _u.replace("O", "0").replace("I", "1").replace("L", "1")
+        if len(_cck) >= 8 and re.fullmatch(r"[0-9A-HJKMNP-TV-Z]+", _cck) \
+                and any(c in "0189" for c in _cck):
+            classes.append("crockford")
         if (_b64_full or _b64_stripped) and "+" not in _nolabel and "/" not in _nolabel:
             classes.append("base64url")
         if re.fullmatch(r"[A-Za-z0-9]+", compact) and len(compact) >= 8:
@@ -391,6 +403,7 @@ def fingerprint(data: bytes) -> dict:
     hypotheses: dict[str, float] = {}
     for label, prior in (
         ("hex", .92), ("base64", .90), ("base64url", .78), ("base32", .84),
+        ("base32hex", .70), ("crockford", .70),
         ("base58/base62", .50), ("base85", .42), ("binary", .82), ("octal", .78),
         ("decimal", .78), ("morse", .92), ("url", .96), ("quoted-printable", .94),
         ("pem", .99), ("jwt", .99), ("a1z26/polybius", .55), ("bacon", .48),

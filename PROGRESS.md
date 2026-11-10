@@ -495,3 +495,12 @@ a non-standard generator or malformed data. See LOGS S40.3.
   help clarified.
 - README documents the interactive UI via a bare `autocrypt` (no args, TTY).
 - All CLI/UI/explain/e3/e4 regressions pass. Version 0.7.0.
+
+## Session 40.9 — Detect base32hex / Crockford; swapped-case base64 fallback
+- `fingerprint` now emits `base32hex` and `crockford` classes (whole-buffer
+  alphabet match + a digit 0/1/8/9 that standard base32 rejects), each with a
+  0.70 hypothesis. These were referenced but never detected.
+- `solve_base64` adds a case-swapped-alphabet fallback.
+- z85 left as-is: it already has a dedicated solver matcher (0.7).
+- New `tests/test_encoding_variants.py`; hexfamily 10/10 plus targeted
+  regressions green. Version 0.8.0.
