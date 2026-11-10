@@ -51,9 +51,14 @@ function Get-RealPython($repoDir) {
   foreach ($c in $cands) {
     if (-not ($c -and (Test-Path $c))) { continue }
     $v = & $c -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
-    if ($LASTEXITCODE -ne 0) { continue }
-    $p2 = $v.Split('.')
-    if ([int]$p2[0] -gt 3 -or ([int]$p2[0] -eq 3 -and [int]$p2[1] -ge 12)) {
+    # A candidate may emit nothing (path lookup fails in a child shell), so
+    # guard against $null before calling .Split().
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($v)) { continue }
+    $p2 = $v.Trim().Split('.')
+    if ($p2.Count -lt 2) { continue }
+    $maj = 0; $min = 0
+    if (-not [int]::TryParse($p2[0], [ref]$maj) -or -not [int]::TryParse($p2[1], [ref]$min)) { continue }
+    if ($maj -gt 3 -or ($maj -eq 3 -and $min -ge 12)) {
       return $c
     }
   }
@@ -115,9 +120,13 @@ if ($LASTEXITCODE -ne 0) { Write-Host "error: pip install failed." -ForegroundCo
 $env:Path = "$Bin;$env:Path"
 # Persistent (User scope) - affects all future terminals, idempotent:
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-if ($userPath -notlike "*$Bin*") {
-  $sep = if ([string]::IsNullOrEmpty($userPath)) { '' } else { ';' }
-  [Environment]::SetEnvironmentVariable('Path', "$userPath$sep$Bin", 'User')
+# Idempotency via exact per-entry equality (split on ';'), NOT substring match:
+# a substring check wrongly treats "C:\x\Scripts2" as already containing
+# "C:\x\Scripts". PowerShell's -notcontains is case-insensitive by default.
+$entries = if ([string]::IsNullOrWhiteSpace($userPath)) { @() } else { $userPath -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } }
+if ($entries -notcontains $Bin) {
+  $newPath = if ($entries.Count -eq 0) { $Bin } else { ($entries + $Bin) -join ';' }
+  [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
   Write-Host "    added $Bin to User PATH (new terminals will pick it up)"
 } else {
   Write-Host "    $Bin already on User PATH"

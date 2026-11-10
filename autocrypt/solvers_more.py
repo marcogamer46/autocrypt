@@ -610,6 +610,183 @@ def solve_lfsr(data, ctx):
                     "_statistical": True}, max(.7, min(.99, conf))
 
 
+# ------------------------------------------------- LFSR as labeled fields
+# Challenge style: text gives the LFSR register's initial state (bit list),
+# the feedback taps, and an encrypted flag as hex. We try every plausible LFSR
+# convention (Fibonacci/Galois, shift direction, tap mirroring, bit vs byte
+# emission, endianness) and report the decryption that reads as text.
+_LFSR_MARKERS = (b"flag{", b"FLAG{", b"academy{", b"picoCTF{", b"CTF{",
+                 b"ctf{", b"HTB{", b"THM{", b"LFSR{", b"flag is")
+
+
+def _lfsr_fields(txt):
+    m_init = re.search(r"\bInitial\b\s*[Ss]tate\s*[:=]\s*\[([^\]]*)\]", txt)
+    m_tap = re.search(r"\b[Tt]aps?\s*[:=]\s*\[([^\]]*)\]", txt)
+    m_ct = re.search(r"Encrypted\s+[Ff]lag\s*[:=]\s*([0-9a-fA-F]{8,})", txt)
+    if not (m_init and m_tap and m_ct):
+        return None
+    try:
+        init = [int(x) for x in re.findall(r"-?\d+", m_init.group(1))]
+        taps = [int(x) for x in re.findall(r"-?\d+", m_tap.group(1))]
+        ct = bytes.fromhex(m_ct.group(1))
+    except (ValueError, TypeError):
+        return None
+    if not (init and taps and ct):
+        return None
+    return init, taps, ct
+
+
+def _binparity(x):
+    return bin(x).count("1") & 1
+
+
+def _lfsr_bits(n, taps, seed, kind, left, flip, ob, total):
+    mask = (1 << n) - 1
+    hi = n - 1
+    tm = 0
+    for t in taps:
+        tm |= 1 << (hi - t if flip else t)
+    state, bits = seed, []
+    for _ in range(total):
+        if kind == "galois":
+            b = (state >> hi) & 1 if left else state & 1
+            if left:
+                state = ((state << 1) & mask) ^ (tm if b else 0)
+            else:
+                state = (state >> 1) ^ (tm if b else 0)
+            bits.append(b)
+        else:
+            fb = _binparity(state & tm)
+            if ob == "fb":
+                o = fb
+            elif ob == "lsb":
+                o = state & 1
+            elif ob == "msb":
+                o = (state >> hi) & 1
+            else:  # shifted-out bit
+                o = (state >> hi) & 1 if left else state & 1
+            if left:
+                state = ((state << 1) | fb) & mask
+            else:
+                state = (fb << hi) | (state >> 1)
+            bits.append(o)
+    return bits
+
+
+def _bits_to_bytes(bits, msb):
+    out = bytearray()
+    for i in range(0, len(bits) - 7, 8):
+        v = 0
+        for k, b in enumerate(bits[i:i + 8]):
+            v |= b << (7 - k if msb else k)
+        out.append(v)
+    return bytes(out)
+
+
+def _lfsr_bytes(n, taps, seed, left, flip, hi_byte, adv_first, need):
+    mask = (1 << n) - 1
+    hi = n - 1
+    tm = 0
+    for t in taps:
+        tm |= 1 << (hi - t if flip else t)
+    state, out = seed, bytearray()
+    while len(out) < need:
+        if adv_first:
+            fb = _binparity(state & tm)
+            state = ((state << 1) | fb) & mask if left else (fb << hi) | (state >> 1)
+            out.append((state >> (hi - 7)) & 0xFF if hi_byte else state & 0xFF)
+        else:
+            out.append((state >> (hi - 7)) & 0xFF if hi_byte else state & 0xFF)
+            fb = _binparity(state & tm)
+            state = ((state << 1) | fb) & mask if left else (fb << hi) | (state >> 1)
+    return bytes(out[:need])
+
+
+def _lfsr_register(n, taps, seed, left, flip, little, need):
+    mask = (1 << n) - 1
+    hi = n - 1
+    tm = 0
+    for t in taps:
+        tm |= 1 << (hi - t if flip else t)
+    nb = (n + 7) // 8
+    state, out = seed, bytearray()
+    while len(out) < need:
+        fb = _binparity(state & tm)
+        state = ((state << 1) | fb) & mask if left else (fb << hi) | (state >> 1)
+        out.extend(state.to_bytes(nb, "little" if little else "big"))
+    return bytes(out[:need])
+
+
+def _lfsr_fields_prior(fp):
+    t = fp.get("_text", "")
+    if re.search(r"Initial\s+[Ss]tate\s*[:=]\s*\[", t) and re.search(r"\b[Tt]aps?\s*[:=]\s*\[", t) \
+            and re.search(r"Encrypted\s+[Ff]lag\s*[:=]", t):
+        return 0.99
+    return 0.0
+
+
+def _lfsr_keep_best(best, pt, tag):
+    if not pt:
+        return best
+    pr = sum(32 <= b < 127 or b in (9, 10, 13) for b in pt) / len(pt)
+    mark = any(m in pt for m in _LFSR_MARKERS)
+    rank = pr + (2.0 if mark else 0.0)
+    if best is None or rank > best[4]:
+        return (pt, tag, pr, mark, rank)
+    return best
+
+
+@solver("lfsr-known-fields", _lfsr_fields_prior)
+def solve_lfsr_fields(data, ctx):
+    """Decrypt a labeled LFSR challenge (initial state + taps + ciphertext)."""
+    if ctx.depth > 1:
+        return
+    parsed = _lfsr_fields(_txt(data))
+    if not parsed:
+        return
+    init, taps, ct = parsed
+    n = len(init)
+    if n < 8 or not ct:
+        return
+    seeds = {"big": 0, "lil": 0}
+    for b in init:
+        seeds["big"] = (seeds["big"] << 1) | b
+    for i, b in enumerate(init):
+        seeds["lil"] |= b << i
+    need = len(ct)
+    best = None
+    for sname, seed in seeds.items():
+        for kind in ("fib", "galois"):
+            for left in (True, False):
+                for flip in (False, True):
+                    for hi_byte in (False, True):
+                        for adv_first in (True, False):
+                            ks = _lfsr_bytes(n, taps, seed, left, flip, hi_byte, adv_first, need)
+                            pt = bytes(c ^ ks[i] for i, c in enumerate(ct))
+                            best = _lfsr_keep_best(
+                                best, pt,
+                                f"{sname} {kind} left={left} flip={flip} byte hi={hi_byte} adv={adv_first}")
+                    if n % 8 == 0:
+                        for little in (False, True):
+                            ks = _lfsr_register(n, taps, seed, left, flip, little, need)
+                            pt = bytes(c ^ ks[i] for i, c in enumerate(ct))
+                            best = _lfsr_keep_best(best, pt, f"{sname} {kind} reg left={left} flip={flip} little={little}")
+                    for ob in ("fb", "lsb", "msb", "shifted"):
+                        for msb in (False, True):
+                            bits = _lfsr_bits(n, taps, seed, kind, left, flip, ob, need * 8)
+                            ks = _bits_to_bytes(bits, msb)
+                            if len(ks) < need:
+                                continue
+                            pt = bytes(c ^ ks[i] for i, c in enumerate(ct))
+                            best = _lfsr_keep_best(best, pt, f"{sname} {kind} left={left} flip={flip} ob={ob} msb={msb}")
+    if best is None:
+        return
+    pt, tag, pr, mark, _ = best
+    if mark or pr >= 0.88:
+        conf = 1 - len(pt) * (95 / 256) ** (len(pt) // 2)
+        yield pt, f"LFSR fields decoded ({tag})", {"_statistical": True}, max(.6, min(.99, conf))
+
+
 # ------------------------------------------- Franklin-Reiter related messages
 def _pmod(a, b, N):
     """a mod b for polynomials over Z_N (low->high). None if lead coeff not invertible."""

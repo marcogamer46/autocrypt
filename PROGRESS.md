@@ -157,6 +157,41 @@ Very_Smooth p−1 claim). See AUTO_MODE.md.
 - E5 (`--explain` flag): new `explain.py` maps each chain layer (with params) to a plain-English sentence (~120 templates; fallback for unknown/long-param solvers; `chr(98)`→`b`). Wired into autocrypt.py (`--explain` prints indented lines under each ranked result). `test_explain.py` 7/7 incl. CLI smoke on Sum-O-Primes.
 - E7 (`--fast`/`--deep`): Context gains `speed`/`heavy_names`; per-solver slices + adaptive extension scaled by speed; `--fast` (speed 0.5) skips heavy brute-force solvers (`dlp-composite-smooth/hill-2x2/enigma-m3/hash-crack/vigenere-brute`); `--deep` (speed 2.0) raises `max_depth` 6→9. Plumbed through `solve_data`→`search(max_depth=)`. Fixed latent `--verbose` bug (`_search_t0` → `ctx.search_t0`). `test_e7.py` 4/4 PASS.
 
+## Session 40 (2026-11-08) — updater reinstall failure no longer swallowed (install/update path)
+
+Fixed a real bug in the self-update path: `_maybe_reinstall_after_pull` ignored
+pip's return code and used the wrong cwd, so a failed post-pull reinstall was
+silently reported as a successful update. `_update_git` now uses the git root as
+the pip cwd and exits nonzero when the reinstall fails. Tests extended to cover
+both the editable-installer layout and the reinstall-failure path. See LOGS S40.
+
+## Session 40.2 (2026-11-10) — remaining install/update fixes (all 10 audit findings addressed)
+
+Completed the rest of the confirmed install/update-path fixes:
+- `do_update()` dispatch: cfg branch trusts only a `repo` path that is itself a
+  git checkout; bare-checkout fallback requires the package dir to be a direct
+  child of the git root (`<repo>/autocrypt`) so an index install inside an
+  unrelated ancestor git repo is no longer misclassified as a source checkout.
+- `install.sh`: Python-candidate loop skips `<3.12` interpreters and continues to
+  later candidates (no hard-abort on first found); PATH persistence also writes
+  `~/.bash_profile` (macOS login shells).
+- `install.ps1`: `$v.Split('.')` guarded against `$null`/whitespace/non-numeric;
+  User PATH idempotency is now exact per-entry comparison (split on `;`), not
+  substring match.
+Both installers pass syntax checks; updater tests pass; full standalone suite
+re-run confirms no regression (only known pre-existing BKLG-22 flaw). See LOGS
+S40.2.
+
+## Session 40.3 (2026-11-10) — labeled-LFSR solver + version bump
+
+Added `lfsr-known-fields` solver for the `LFSR Initial State / Taps /
+Encrypted Flag` format (parses the three fields, tries every convention,
+reports the readable decryption). Regression `tests/test_lfsr_fields.py` passes
+on a synthetic c14-convention instance. Version bumped to `0.2.0`. Honest note:
+the exact pasted 64-bit instance does NOT decode under any standard LFSR
+keystream convention (best printable ~56-62%, no flag marker), so it likely uses
+a non-standard generator or malformed data. See LOGS S40.3.
+
 ## Next
 0. Real-challenge expansion (R-series, seed theorem with new real challenges): (a) more single-file RSA variants — Wiener (small d), close-prime Fermat, Håstad broadcast, shared-prime, dp/dq leak, common-modulus (several already have family tests; validate against real challenge data); (b) more multi-file pairs where the parameters/keys live in challenge.py (strengthen hint propagation for e/ct/enc variables, AES modes, RSA keys from `RSA.construct`/PEM); (c) hash-crack + XOR pairing on real data; (d) re-run the full real corpus after each solver addition and log regressions. Keep `real_challenges/` as the isolated, untrusted-data corpus; add new fixtures to run_tests as they stabilize.
 1. E3 cycle 3 (remaining failures): (a) c03 rank #2 — vigenere key `k3y` is recovered but a junk caesar row outranks it; likely a ranking/prior-only issue, not true-absent; (b) c09 common-modulus and c11 Franklin-Reiter still fail in the E3 pairs despite family tests passing 10/10 — the pair invocations trip a condition the families don't (investigate the actual c09/c11 pair shapes; the A-group fixes covered delimiter/ordering, so the gap is elsewhere); (c) c01 rot13-hex envelope extraction; (d) c14 LFSR crib handling; (e) c08 reverse+caesar custom; (f) c04 repeat-XOR over short body; (g) sep-hex c15 <3s scheduler latency (target 10/10).

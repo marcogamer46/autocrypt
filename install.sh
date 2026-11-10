@@ -23,21 +23,22 @@ CFG="$VENV_DIR/autocrypt.json"
 # ---------------------------------------------------------------------------
 PY=""
 for cand in "${AUTOCRYPT_PYTHON:-}" python3 python; do
-  if [ -n "$cand" ] && command -v "$cand" >/dev/null 2>&1; then
-    PY="$cand"
-    break
+  # Skip empty candidates and names missing from PATH.
+  if [ -z "$cand" ] || ! command -v "$cand" >/dev/null 2>&1; then
+    continue
   fi
+  # Probe this candidate's version; if it fails or is <3.12, keep looking
+  # instead of hard-aborting on a found-but-too-old interpreter.
+  ver="$("$cand" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)" || continue
+  major="${ver%%.*}"; minor="${ver#*.}"; minor="${minor%%.*}"
+  if [ "$major" -lt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -lt 12 ]; }; then
+    continue
+  fi
+  PY="$cand"
+  break
 done
 if [ -z "$PY" ]; then
-  echo "error: no python3/python found on PATH. Install Python 3.12+." >&2
-  exit 1
-fi
-
-# Require Python >= 3.12 (the project does too).
-ver="$("$PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
-major="${ver%%.*}"; minor="${ver#*.}"; minor="${minor%%.*}"
-if [ "$major" -lt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -lt 12 ]; }; then
-  echo "error: autocrypt needs Python >=3.12 (found $ver)." >&2
+  echo "error: no Python >=3.12 found on PATH. Install Python 3.12+." >&2
   exit 1
 fi
 
@@ -105,7 +106,7 @@ export PATH="$BIN:$PATH"
 # Persist for future shells: append one guarded export line to each existing
 # profile/shellrc. Fully idempotent (checked with grep -Fqx).
 line="export PATH=\"$BIN:\$PATH\""
-for rc in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
+for rc in "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
   if [ -f "$rc" ] && ! grep -Fqx -- "$line" "$rc"; then
     printf '\n%s\n' "$line" >> "$rc"
     echo "    added PATH line to $rc"
@@ -117,12 +118,12 @@ done
 # ---------------------------------------------------------------------------
 echo ""
 echo "Installed. 'autocrypt' is available in NEW shells."
-echo "To use it in THIS terminal now, run one of:  source ~/.bashrc   |   source ~/.profile   |   source ~/.zshrc"
+echo "To use it in THIS terminal now, run one of:  source ~/.bashrc   |   source ~/.profile   |   source ~/.bash_profile   |   source ~/.zshrc"
 if command -v autocrypt >/dev/null 2>&1; then
   echo "Verify:  autocrypt --help"
 fi
 echo ""
 echo "Uninstall:"
 echo "  rm -rf \"$INSTALL_ROOT\""
-echo "  # and remove the line(s) printed above from ~/.profile / ~/.bashrc / ~/.zshrc;"
+echo "  # and remove the line(s) printed above from ~/.bash_profile / ~/.profile / ~/.bashrc / ~/.zshrc;"
 echo "  # or simply:  \"$VPY\" -m pip uninstall autocrypt"

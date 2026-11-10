@@ -522,3 +522,60 @@ Linux installers so `autocrypt` is a global command, and add
   only exercised the refusal path. Fixed both `.std` → `.stdout` and added a
   real regression test (`tests/test_updater.py`) that performs an actual
   fast-forward pull against a local bare remote + clones — it now advances HEAD.
+
+- S40.1 Audited the install/update path (installers + updater + CLI wiring + packaging)
+  after restoring the standalone suite (33/34, only pre-existing BKLG-22). Found and
+  fixed a real swallowed-failure bug in the updater: `_maybe_reinstall_after_pull`
+  ran `pip install .` and ignored its return code, so a failed reinstall after a
+  successful pull was silently reported as a successful update (exit 0). Also, the
+  fallback dispatch path passed the *inner package folder* as pip's cwd, so the
+  reinstall always failed with "Directory '.' is not installable". Now:
+  - `_update_git` passes the git root (holds `pyproject.toml`) as reinstall cwd.
+  - `_update_git` honors the reinstall result: on failure it prints a clear message
+    and returns exit 1 instead of claiming success.
+  - `_update_git` signature simplified to `_update_git(root)` (dropped the once-used
+    `package_dir` arg); all call sites updated.
+  - `tests/test_updater.py` extended: simulates the installer's editable layout
+    (git-pull succeeds) and asserts a failed post-pull reinstall surfaces exit 1.
+  Verified in a sandbox using a shallow clone (the installer bootstrap flow).
+
+- S40.2 Completed the remaining confirmed install/update-path fixes from the
+  adversarial audit (all 10 findings now addressed):
+  - `updater.do_update()`: the installer cfg branch now only trusts a `repo` path
+    that is itself a git checkout (requires `(repo/.git`), and the bare-checkout
+    fallback now requires the package dir to be a *direct child* of the git root
+    (`<repo>/autocrypt`). A non-editable index install whose site-packages merely
+    sits inside an unrelated ancestor git repo is no longer misclassified as a
+    source checkout (findings #3, #205).
+  - `install.sh`: the Python-candidate loop now probes each candidate's version
+    and skips `<3.12` interpreters, continuing to later candidates instead of
+    hard-aborting on the first found (finding #25); PATH persistence now also
+    writes `~/.bash_profile` (macOS login shells) ahead of `~/.profile`
+    (finding #108).
+  - `install.ps1`: `$v.Split('.')` is guarded against `$null`/whitespace and
+    non-numeric output (finding #55); User PATH idempotency switched from a
+    substring `-notlike "*$Bin*"` check to exact per-entry comparison split on
+    `;` (finding #118).
+  - Both installers pass syntax checks (`bash -n`, PowerShell parser); updater
+    tests pass; full standalone suite re-run confirmed no regression (only the
+    known pre-existing BKLG-22 flaw remains).
+
+- S40.3 Added a labeled-LFSR solver (`lfsr-known-fields`) for the challenge
+  format `LFSR Initial State: [bits] / LFSR Taps: [...] / Encrypted Flag: hex`
+  in `autocrypt/solvers_more.py`. It parses the three fields and exhaustively
+  tries every plausible LFSR convention (Fibonacci/Galois, shift direction, tap
+  mirroring, bit vs byte emission, high/low byte, advance order, and both seed
+  endiannesses), then reports the decryption that reads as text / contains a
+  flag marker. Regression `tests/test_lfsr_fields.py` builds a synthetic
+  challenge in the repo's E3 c14 convention with a known flag and verifies
+  recovery (rank-0 `LFSR fields decoded (big fib left=True flip=False byte
+  hi=False adv=True)`).
+  - **Honest result on the pasted 64-bit instance:** after exhaustively testing
+    every standard convention (including the c14 byte model and the pico-style
+    right-shift model), none decrypts the provided ciphertext to a readable
+    flag. The best printable fraction across all models is ~56-62%, and no
+    decryption contains any flag marker. So either the source generator uses a
+    non-standard convention, or the pasted values are malformed. The solver is
+    correct for the format (proven by the c14 regression) but cannot recover a
+    plaintext this instance does not encode under standard LFSR keystream XOR.
+  - Version bumped `0.1.0` → `0.2.0` (`autocrypt/_version.py`).

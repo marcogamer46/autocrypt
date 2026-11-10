@@ -5,6 +5,11 @@ AttributeError: 'CompletedProcess' object has no attribute 'std' because the
 code used `.std` instead of `.stdout`. The bug only surfaced when the
 dirty-tree guard did NOT return early, so a plain import/refusal test could
 not catch it — we must actually perform a fast-forward pull.
+
+Also covers the reinstall step: a failed ``pip install`` after a successful
+pull must surface as a nonzero exit (it used to be silently swallowed and
+reported as a successful update), and an editable install (the installer's
+layout) must skip the reinstall and return success.
 """
 import os
 import subprocess
@@ -52,12 +57,44 @@ def main():
         _git("push", "-q", "origin", "main", cwd=upstream)
 
         before = _git("rev-parse", "HEAD", cwd=installed)
-        code = updater._update_git(installed, installed)
+        # The installer installs the package editable (pip install -e), so
+        # _is_editable_install() is True and the post-pull reinstall is
+        # skipped. Simulate that so the git-pull path returns success.
+        _orig_editable = updater._is_editable_install
+        updater._is_editable_install = lambda: True
+        try:
+            code = updater._update_git(installed)
+        finally:
+            updater._is_editable_install = _orig_editable
         after = _git("rev-parse", "HEAD", cwd=installed)
         assert code == 0, f"expected exit 0, got {code}"
         assert before != after, "fast-forward pull did not advance HEAD"
         assert (installed / "new.txt").exists(), "pulled file missing"
         print(f"PASS: updater git-pull advanced {before[:7]} -> {after[:7]}")
+
+        # Non-editable install: after the pull, the reinstall runs. A failed
+        # `pip install` must surface as a nonzero exit, not be swallowed.
+        # Push another upstream commit so the installed checkout is behind again
+        # and the pull path is actually exercised.
+        (upstream / "new2.txt").write_text("new2", encoding="utf-8")
+        _git("add", "new2.txt", cwd=upstream)
+        _git("-c", "user.email=t@t", "-c", "user.name=t",
+             "commit", "-qm", "new2", cwd=upstream)
+        _git("push", "-q", "origin", "main", cwd=upstream)
+        updater._is_editable_install = lambda: False
+        _real_run = updater.subprocess.run
+        def _fake_pip(cmd, **kw):
+            if cmd[:2] == [updater.sys.executable, "-m"] and "pip" in cmd:
+                return updater.subprocess.CompletedProcess(cmd, 1, "", "boom\n")
+            return _real_run(cmd, **kw)
+        updater.subprocess.run = _fake_pip
+        try:
+            code = updater._update_git(installed)
+        finally:
+            updater.subprocess.run = _real_run
+            updater._is_editable_install = _orig_editable
+        assert code == 1, f"expected exit 1 when reinstall fails, got {code}"
+        print("PASS: updater surfaces a failed post-pull reinstall (exit 1)")
     return 0
 
 
