@@ -1541,3 +1541,204 @@ def solve_byte_transforms(data, ctx):
                 seen.add(out)
                 score, _ = assess(out)
                 yield out, "byte-transform", {"key": x}, score
+
+
+# ============================================================ medium pack
+# Symmetric known-key decryption (DES / 3DES / Blowfish / ChaCha20).
+# Each mirrors the established aes-key solver conventions and is verified
+# against pycryptodome round-trips in tests/test_medium_pack.py.
+
+try:
+    from Crypto.Cipher import DES as _DES
+except Exception:
+    _DES = None
+try:
+    from Crypto.Cipher import DES3 as _DES3
+except Exception:
+    _DES3 = None
+try:
+    from Crypto.Cipher import Blowfish as _Blowfish
+except Exception:
+    _Blowfish = None
+try:
+    from Crypto.Cipher import ChaCha20 as _ChaCha20
+except Exception:
+    _ChaCha20 = None
+
+
+
+def _sym_key_prior(fp):
+    text = fp.get("_text", "")
+    if not re.search(r"\bkey\s*[:=]", text, re.I):
+        return 0.0
+    if re.search(r"\b(mode|iv|nonce|algorithm|cipher)\s*[:=]", text, re.I):
+        return 0.7
+    bloblines = [ln for ln in text.splitlines()
+                 if not re.match(r"\s*key\s*[:=]", ln, re.I)]
+    blob = "".join(bloblines).strip().replace("0x", "").replace("0X", "")
+    if len(blob) >= 16 and re.fullmatch(r"[0-9a-fA-F]+", blob):
+        return 0.65
+    return 0.0
+
+
+# Planned replacement for the medium-pack section of solvers_pack7.py
+# (lines ~1569-1666).  Validated with py_compile before splicing.
+
+import re
+
+def _sym_kv(text):
+    kv = {}
+    for k, val in re.findall(r"\b(key|iv|mode|algorithm|cipher|nonce)\s*[:=]\s*(\S+)",
+                             text, re.I):
+        kv.setdefault(k.lower(), val)
+    return kv
+
+
+def _sym_blob(text, skip_keys):
+    rx = re.compile(r"\s*(%s)\s*[:=]" % skip_keys, re.I)
+    lines = [ln for ln in text.splitlines() if not rx.match(ln)]
+    blob = "".join(lines).strip().replace("0x", "").replace("0X", "")
+    try:
+        return bytes.fromhex(blob)
+    except ValueError:
+        return None
+
+
+def _norm_hex_token(s):
+    s = s.strip()
+    return s[2:] if s[:2].lower() == "0x" else s
+
+
+def _block_decrypt(alg_mod, key, iv, mode, raw):
+    m = (mode or "ecb").lower()
+    if alg_mod is _ChaCha20:
+        if iv is None:
+            return None
+        return _ChaCha20.new(key=key, nonce=iv).decrypt(raw)
+    if alg_mod not in (_DES, _DES3, _Blowfish):
+        return None
+    if m == "ecb":
+        return alg_mod.new(key, alg_mod.MODE_ECB).decrypt(raw)
+    if iv is None:
+        return None
+    if m == "cbc":
+        return alg_mod.new(key, alg_mod.MODE_CBC, iv).decrypt(raw)
+    if m == "ctr":
+        from Crypto.Util import Counter
+        blk = alg_mod.block_size
+        counter = Counter.new(8 * blk, initial_value=int.from_bytes(iv, "big"))
+        return alg_mod.new(key, alg_mod.MODE_CTR, counter=counter).decrypt(raw)
+    if m == "cfb":
+        return alg_mod.new(key, alg_mod.MODE_CFB, iv).decrypt(raw)
+    if m == "ofb":
+        return alg_mod.new(key, alg_mod.MODE_OFB, iv).decrypt(raw)
+    return None
+
+
+_BLOCK_G = (_DES, _DES3, _Blowfish)
+
+_ALG_KEY_LENS = {
+    id(_DES): {8},
+    id(_DES3): {16, 24},
+    id(_Blowfish): set(range(4, 57)),
+    id(_ChaCha20): {32},
+}
+
+
+def _alg_label_ok(alg_mod, kv):
+    lab = (kv.get("algorithm") or kv.get("cipher") or "").lower()
+    lab = lab.replace("-", "").replace("_", "").replace(" ", "")
+    if not lab:
+        return True
+    if alg_mod is _ChaCha20:
+        return lab.startswith("chacha")
+    if alg_mod is _DES3:
+        return lab in ("3des", "tdes", "tripledes", "des3") or "triple" in lab
+    if alg_mod is _Blowfish:
+        return lab.startswith("blowfish") or lab == "bf"
+    return lab.startswith("des") and not lab.startswith("3des") \
+        and "triple" not in lab and lab != "aes"
+
+
+def _parse_key(ktxt, alg_mod):
+    raw = _norm_hex_token(ktxt)
+    try:
+        kb = bytes.fromhex(raw)
+    except ValueError:
+        kb = None
+    allowed = _ALG_KEY_LENS.get(id(alg_mod))
+    if kb is not None and (allowed is None or len(kb) in allowed):
+        return kb
+    asc = ktxt.encode()
+    if allowed is not None and len(asc) in allowed:
+        return asc
+    return kb if kb is not None else asc
+
+
+def _parse_iv(token):
+    raw = _norm_hex_token(token)
+    try:
+        return bytes.fromhex(raw)
+    except ValueError:
+        return None
+
+
+def _run_sym(data, ctx, alg_mod, label):
+    if alg_mod is None:
+        return
+    try:
+        text = data.decode("latin-1")
+    except Exception:
+        return
+    kv = _sym_kv(text)
+    if "key" not in kv:
+        return
+    if not _alg_label_ok(alg_mod, kv):
+        return
+    key = _parse_key(kv["key"], alg_mod)
+    mode = (kv.get("mode") or "ecb").lower()
+    iv = None
+    need_iv = (mode in ("cbc", "ctr", "cfb", "ofb")) or alg_mod is _ChaCha20
+    if need_iv:
+        itoken = kv.get("iv") or kv.get("nonce")
+        if itoken is None:
+            return
+        iv = _parse_iv(itoken)
+        if iv is None:
+            return
+    raw = _sym_blob(text, "key|iv|mode|algorithm|cipher|nonce")
+    if raw is None:
+        return
+    if alg_mod in _BLOCK_G and mode in ("ecb", "cbc"):
+        if len(raw) % alg_mod.block_size != 0:
+            return
+    try:
+        out = _block_decrypt(alg_mod, key, iv, mode, raw)
+    except Exception:
+        return
+    if out is None or not out:
+        return
+    score, _ = assess(out)
+    yield out, label, {"key_len": len(key)}, score
+@solver("des-key", _sym_key_prior)
+def solve_des(data, ctx):
+    yield from _run_sym(data, ctx, _DES, "DES")
+
+
+@solver("3des-key", _sym_key_prior)
+def solve_3des(data, ctx):
+    yield from _run_sym(data, ctx, _DES3, "3DES")
+
+
+@solver("blowfish-key", _sym_key_prior)
+def solve_blowfish(data, ctx):
+    yield from _run_sym(data, ctx, _Blowfish, "Blowfish")
+
+
+@solver("chacha20-key", _sym_key_prior)
+def solve_chacha20(data, ctx):
+    yield from _run_sym(data, ctx, _ChaCha20, "ChaCha20")
+
+
+
+

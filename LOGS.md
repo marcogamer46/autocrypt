@@ -579,3 +579,26 @@ Linux installers so `autocrypt` is a global command, and add
     correct for the format (proven by the c14 regression) but cannot recover a
     plaintext this instance does not encode under standard LFSR keystream XOR.
   - Version bumped `0.1.0` → `0.2.0` (`autocrypt/_version.py`).
+
+- S40.4 Added a "medium pack" of four symmetric known-key decryption solvers
+  in `autocrypt/solvers_pack7.py`: `des-key`, `3des-key`, `blowfish-key`,
+  `chacha20-key`. Each mirrors the established aes-key conventions, parses
+  key/iv/mode/algorithm/nonce labels and decrypts the hex ciphertext blob via
+  pycryptodome (ECB/CBC/CTR/CFB/OFB for block ciphers; ChaCha20 stream).
+  Verified against pycryptodome round-trips in `tests/test_medium_pack.py`.
+  - Adversarial review (Workflow) surfaced fixes, all applied: case-insensitive
+    label stripping from the blob (uppercase KEY=/IV=/MODE=), IV parsed only
+    when the mode needs it (ECB no longer aborts on a stray unparseable IV),
+    0X prefix normalization, non-hex ASCII key fallback, an algorithm/cipher
+    label guard (cipher=aes no longer runs DES/3DES/Blowfish/ChaCha20), and a
+    stricter prior requiring mode/iv/nonce/algorithm evidence or a pure-hex
+    body (cuts the shared high-prior fan-out to unrelated prose files).
+  - Full suite re-run: all medium-pack cases PASS; the three pre-existing
+    failures (affine caesar4, matrix reverse, xorfamily xor5_w2) were
+    confirmed pre-existing by baseline-ing them against HEAD pack7 (identical
+    outcomes). No regression introduced.
+  - Removed two earlier experiments that don't fit the flag-recovery model:
+    two-square cipher and MD5 length-extension (non-flag-shaped outputs are
+    filtered by core retention); skipped a redundant RSA prime-power solver
+    (main RSA solver already handles n=p²).
+  - Version bumped `0.2.0` → `0.3.0` (`autocrypt/_version.py`).

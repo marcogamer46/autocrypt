@@ -440,3 +440,15 @@ a non-standard generator or malformed data. See LOGS S40.3.
   ambiguous), Vigenère/cipher pair (identical ciphertext, unknown key, no crib),
   and `rot13.txt` (ROT13 output is non-dictionary junk — random flag or extra
   unprovided layer). Tracked in `things_it_cant_solve.txt`.
+
+## Session 40.4 — Medium-tier symmetric-key pack
+- Four new solvers (DES / 3DES / Blowfish / ChaCha20) recover flags from
+  known-key challenge format `key=... [iv=...] [mode=...] <hex ciphertext>`.
+- Addresses the "train it more into medium stuff" goal with real crypto
+  primitives beyond the classical ciphers already present.
+- Robustness hardened via adversarial review (uppercase labels, CBC/CTR
+  branches, ASCII-key fallback, algorithm-label guard, false-positive gating).
+- Tests: `test_medium_pack.py` covers 10 checks incl. uppercase labels,
+  CBC/CTR, ASCII key, label mismatch, and a no-crypto prose sniff.
+- All pass; full suite shows no regressions (three failures confirmed
+  pre-existing against HEAD).
