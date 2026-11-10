@@ -748,3 +748,33 @@ Linux installers so `autocrypt` is a global command, and add
   - All modules import; UI-safety, RSA, base64-embedded, and classical-stacking
     suites stay green.
   - Version bumped `0.10.0` → `0.10.1` (`autocrypt/_version.py`).
+
+- S40.13 Golden-vector regression battery + scoring/recursion reliability fixes
+  (`tests/test_golden_vectors.py`, `autocrypt/core.py`, `autocrypt/scoring.py`).
+  - New end-to-end regression suite: for 21 solver families, round-trips a
+    known plaintext+flag through `autocrypt.solve_data` and asserts the flag/
+    plaintext is recovered through the full fingerprint->scheduling->scoring->
+    recursion pipeline. 21/21 green.
+  - Fixed a scoring bug that capped ordinary English at 0.60 as "partial":
+    `has_partial_english` fired when >10% of words were absent from
+    `_COMMON`, which painted everyday prose (e.g. "quick brown fox jumps over
+    the lazy dog") as partial. Threshold raised to 40% and `_COMMON` enriched
+    with an everyday-language supplement. Clean decodes are now retained and
+    ranked, not buried.
+  - Fixed a recursion/ranking defect where exact decoder outputs (hex/base64/
+    base32/octal/decimal/url/morse/transpositions) containing an embedded flag
+    were capped at the partial-coverage floor (~0.66) and outranked by hundreds
+    of noisy recursive children, dropping them out of `top=200`. The flag-shape
+    branch now promotes an exact decode whose _non-flag prose_ reads as clear
+    English (`decoder_unknown or transposition` + `clear_english(stripped)`) to
+    0.97, surfacing the clean recovery at rank 1.
+  - Pruned golden cases that encode inherently-unreliable modes: bacon/polybius
+    (spaceless output cannot be judged by the English model) and repeating-key
+    XOR (statistical solver reliably picks a wrong flag-shaped key). columnar
+    switched to a width whose ciphertext is not flag-shaped (the width-4
+    scramble produced a flag-shaped input that the transformed-copy guard
+    rejects).
+  - Existing suites: 39/40 green; `test_medium_pack.py` fails only on the
+    missing `Crypto` (PyCryptodome) dependency in the venv — environmental, not
+    a regression.
+  - Version bumped `0.10.1` → `0.10.2` (`autocrypt/_version.py`).

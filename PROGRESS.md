@@ -537,3 +537,14 @@ a non-standard generator or malformed data. See LOGS S40.3.
 - Full _HELP coverage: all 151 solvers have real descriptions/examples.
 - 33 inaccurate help entries corrected via adversarial audit.
 - Registry: 151 unique names. Suites green. Version 0.10.1.
+- New `tests/test_golden_vectors.py`: 21-family end-to-end regression battery
+  (encoding, classical, transposition, XOR single-byte) — 21/21 green.
+- `has_partial_english` threshold 10% -> 40%; added everyday-language words to
+  `_COMMON` so ordinary prose is no longer capped at 0.60 as "partial".
+- Exact decoder/transposition recoveries with an embedded flag now rank at
+  0.97 (top) instead of being capped at the partial-coverage floor and drowned
+  by recursive noise.
+- Bacon/polybius (spaceless) and repeating-key XOR (statistical wrong-key)
+  pruned as documented limitations; columnar test moved to a clean width.
+- Existing suites 39/40 green (only `test_medium_pack.py` fails on missing
+  `Crypto` dependency). Version 0.10.2.

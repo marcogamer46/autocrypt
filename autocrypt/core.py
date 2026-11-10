@@ -1018,10 +1018,24 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                             # several stacked classical transforms. Keep it
                             # visible but below the as-is floor and genuine
                             # recoveries.
-                            score = max(score, .62 + .35 * flag_plausibility(text))
-                            score = min(score, 0.95)
-                            reason = ("Flag-shaped substring (partial coverage or "
-                                      "multi-step classical chain); not a clean recovery.")
+                            if (decoder_unknown or _is_transposition(method)) and clear_english(
+                                    re.sub(r"\{.*?\}", "", text)):
+                                # An EXACT deterministic decode (encoding decoder
+                                # or transposition) of an encoded buffer
+                                # produced readable prose with an embedded flag:
+                                # the surrounding words are real English, not
+                                # junk-prefix noise, so this is a genuine
+                                # full-buffer recovery. Rank it as a top
+                                # recovery instead of capping it at the
+                                # partial-coverage floor.
+                                score = max(score, 0.97)
+                                reason = ("Exact decode recovered readable prose with an "
+                                          "embedded flag (clean full-buffer recovery).")
+                            else:
+                                score = max(score, .62 + .35 * flag_plausibility(text))
+                                score = min(score, 0.95)
+                                reason = ("Flag-shaped substring (partial coverage or "
+                                          "multi-step classical chain); not a clean recovery.")
                         else:
                             plaus = flag_plausibility(text)
                             if input_flag:

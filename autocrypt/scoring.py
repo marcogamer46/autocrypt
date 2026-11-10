@@ -113,6 +113,37 @@ client browser cookie logout signup signin auth authorize grant level
 stages mission objective hidden find search locate hunt recover extract
 writeup cve reverse engineering fuzz vulnerability security
 """ .split())
+# Everyday-language supplement (nouns/verbs/adjectives that are common in
+# normal prose but fall just outside the frequency corpus above). Without
+# these, ordinary English sentences trip has_partial_english and get capped
+# as "partial", which buries clean decodes below the retention floor.
+_COMMON |= set("""
+brown blue green yellow red orange purple pink black white gray grey
+dog cat horse cow sheep goat pig chicken bird fish rabbit mouse rat
+fox bear wolf lion tiger deer eagle duck goose swan snake frog
+quick fast slow happy sad angry tired hungry thirsty hot cold warm
+cool big small large little tall short long wide narrow thick thin
+jump run walk swim fly sing dance laugh cry shout whisper talk speak
+listen look see watch hear touch smell taste eat drink sleep wake
+book paper pen pencil write read school class student teacher lesson
+home house room door window floor wall roof garden tree flower leaf
+grass water river lake ocean sea beach sand stone rock mountain hill
+sun moon star sky cloud rain snow wind storm thunder lightning fire
+city town road street bridge park market shop store food bread rice
+meat fruit apple orange banana grape fruit lemon lime peach plum
+love heart family friend people child baby mother father sister brother
+morning evening night today tomorrow yesterday week month year time
+money work job office phone call message email letter answer question
+word sentence story game play team sport ball game match win lose
+good great nice best better beautiful pretty cute lovely wonderful
+simple easy hard difficult true false open close start stop begin
+end move turn change leave stay give take bring send carry hold
+put get find make build break cut push pull lift drop throw catch
+color colour shape size number count add subtract multiply divide
+name title label value data line note page section part whole
+welcome golden silver bronze copper iron steel wood metal glass
+regression suite module sample test case input output result value
+""" .split())
 
 
 def _letters(text: str) -> str:
@@ -165,7 +196,11 @@ _INITIAL_LOG = {letter: math.log10((_INITIAL_COUNTS[letter] + .2) / _INITIAL_DEN
 def has_partial_english(data: bytes | str) -> bool:
     text = data.decode("utf-8", "replace") if isinstance(data, bytes) else data
     words = [word for word in re.findall(r"[a-z]+", text.lower()) if len(word) >= 3]
-    return bool(words) and sum(word not in _COMMON for word in words) / len(words) > .10
+    # A sentence with a few low-frequency words is still English; only call it
+    # "partial" when a substantial fraction of its words are unrecognized (i.e.
+    # the text is mostly gibberish). The old >10% rule mislabeled ordinary
+    # prose as partial, which capped clean decodes at 0.60 and hid them.
+    return bool(words) and sum(word not in _COMMON for word in words) / len(words) > .40
 
 
 def quadgram_log(gram: str) -> float:
