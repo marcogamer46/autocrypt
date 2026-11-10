@@ -573,6 +573,14 @@ def solve_caesar(data, ctx):
             if i == 0:
                 params["_relative_candidate"] = True
             yield out, method, params, score
+    elif ctx.depth >= 1:
+        # Intermediate classical layer: the true shift can rank below the
+        # final-plaintext top-3, so keep all 25 shifts reachable for the
+        # next layer in a stack (e.g. vigenere -> caesar -> ...).
+        for score, out, method, params in sorted(
+                ((_rank_score(out), out, method, params) for out, method, params in variants),
+                reverse=True, key=lambda x: x[0]):
+            yield out, method, params, score
     else:
         for score, out, method, params in _top_texts(text, variants, 3):
             yield out, method, params, score
@@ -931,7 +939,12 @@ def solve_affine(data, ctx):
                 sc = max(assess(out)[0], flag_plausibility(out))
             scored.append((sc, out, a, b))
     scored.sort(key=lambda t: -t[0])
-    for i, (sc, out, a, b) in enumerate(scored[:10]):
+    # At intermediate depth the true affine key can rank below the final-
+    # plaintext top-10; keep the whole (tiny) key space reachable so a
+    # stacked classical chain (e.g. vigenere -> affine -> caesar) can
+    # compose. At the surface, top-10 pruning still applies.
+    _cut = len(scored) if ctx.depth >= 1 else 10
+    for i, (sc, out, a, b) in enumerate(scored[:_cut]):
         yield out, "affine", {"a": a, "b": b}, sc
 
 

@@ -685,3 +685,30 @@ Linux installers so `autocrypt` is a global command, and add
     negative-control with no spurious variant classes). hexfamily 10/10 and
     the targeted regression set stay green.
   - Version bumped `0.7.0` → `0.8.0` (`autocrypt/_version.py`).
+
+- S40.10 Budget-aware scheduling; partial-progress retention; stacked classical
+  layers (`autocrypt/core.py`, `autocrypt/solvers.py`).
+  - Scheduling: replaced the hard `jobs[:40]` cap with a budget-aware floor
+    that grows with remaining budget and depth (`--deep` widens it, `--fast`
+    narrows it) while never dropping below 40 and capped at the matched solver
+    count. Precomp workers keep the global deadline; a per-worker slice was
+    tried first but truncated legitimately-slow dedicated solvers
+    (crockford-base32, base64-swapcase) and regressed recovery.
+  - The static monoalphabetic-substitution gate is now applied during job
+    collection so skipped solvers never occupy a precomp worker; the redundant
+    inline copy was removed.
+  - Stacked classical layers: the `should_expand` gate only allowed expansion
+    when output fingerprinted as an encoding, so plain-ASCII classical
+    ciphertext could never spawn a second/third classical layer (vigenere ->
+    affine -> caesar never composed). `should_expand = decoder or has_encoding
+    or child_classical <= 2` permits bounded classical stacking.
+  - Caesar/affine solvers keep their full key space at intermediate depth
+    (`ctx.depth >= 1`): all 25 caesar shifts / all 312 affine keys instead of
+    top-K. Precomp workers now set `ctx.depth` from the submitted depth.
+  - Partial progress on timeout: the strongest candidate seen is retained and
+    surfaced when the search times out with no gated result, reported as
+    `TIMEOUT_PARTIAL` instead of an empty TIMEOUT.
+  - Tests: new `tests/test_classical_stacking.py` (vig->affine->caesar,
+    caesar->caesar, affine->caesar — all fail at baseline, pass now).
+    Encoding-variants and targeted regressions stay green.
+  - Version bumped `0.8.0` → `0.9.0` (`autocrypt/_version.py`).

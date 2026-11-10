@@ -504,3 +504,19 @@ a non-standard generator or malformed data. See LOGS S40.3.
 - z85 left as-is: it already has a dedicated solver matcher (0.7).
 - New `tests/test_encoding_variants.py`; hexfamily 10/10 plus targeted
   regressions green. Version 0.8.0.
+
+## Session 40.10 — Budget-aware scheduling; partial-progress; stacked classical layers
+- Scheduling: replace the hard `jobs[:40]` cap with a budget-aware floor that
+  grows with remaining budget and depth (`--deep` widens, `--fast` narrows),
+  never below 40, capped at matched-solver count. Workers keep the global
+  deadline (a per-worker slice truncated slow solvers and regressed).
+- Static monoalphabetic gate moved to job collection (skipped solvers never
+  occupy a precomp worker); redundant inline copy removed.
+- Stacked classical layers: `should_expand` now allows bounded classical
+  stacking (`child_classical <= 2`), so vigenere->affine->caesar composes.
+- Caesar/affine keep full key space at intermediate depth (`ctx.depth >= 1`);
+  precomp workers set `ctx.depth`.
+- Partial progress: strongest candidate retained and surfaced on timeout as
+  `TIMEOUT_PARTIAL` when no gated result exists.
+- New `tests/test_classical_stacking.py` (3 stacks, all fail at baseline).
+  Encoding-variants + targeted regressions green. Version 0.9.0.

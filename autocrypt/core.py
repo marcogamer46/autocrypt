@@ -157,6 +157,7 @@ def _solver_worker(args):
         wordlist=wordlist,
         rsa_params=rsa_params,
         assess=importlib.import_module("autocrypt.scoring").assess)
+    ctx.depth = depth
     solver = next((s for s in _core.REGISTRY if s.name == name), None)
     if solver is None:
         return name, [], "solver not found"
@@ -604,6 +605,7 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
         "qr code",
     }
     _post_exact = 0
+    best_so_far = None
     while heap and not ctx.expired():
         if ctx.exact_found and _post_exact >= 8:
             break
@@ -630,12 +632,28 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
         fp = fingerprint(blob)
         input_flag = bool(ctx.flag_regex.search(blob.decode("latin-1")))
         input_plaus = flag_plausibility(blob.decode("latin-1")) if input_flag else 0.0
+        encoding_classes = {
+            "hex", "base64", "base64url", "base32", "binary", "octal",
+            "decimal", "morse", "url", "quoted-printable", "pem",
+            "a1z26/polybius", "bacon", "polybius",
+        }
+        fingerprints_as_encoding = bool(
+            fp["magic"] or encoding_classes.intersection(fp["classes"])
+        )
         jobs = []
         for item in REGISTRY:
             if ctx.speed < 1 and item.name in ctx.heavy_names:
                 # --fast: skip the most expensive brute-force solvers BEFORE
                 # submitting them to the pool so their work is never wasted.
                 continue
+            # Static, input-independent gate applied BEFORE pool submission so
+            # a skipped solver never occupies a worker.
+            if item.name == "monoalphabetic-substitution":
+                if chain and any(step.split("(", 1)[0].lower() not in decoder_names
+                                 for step in chain):
+                    continue
+                if fingerprints_as_encoding:
+                    continue
             try:
                 prior = float(item.matches(fp))
             except Exception:
@@ -643,7 +661,19 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
             if prior > 0:
                 jobs.append((prior, item))
         jobs.sort(key=lambda x: -x[0])
-        jobs = jobs[:40]
+        # Budget-aware scheduling: a low-prior solver can be the only one able
+        # to recover a given flag, so never hard-cap at 40 — include every
+        # matched solver up to a floor that grows with the remaining budget and
+        # with depth (--deep = 2x, -fast = 0.5x): a generous budget gets wider
+        # coverage, a scarce one stays frugal, and a huge timeout cannot turn
+        # the floor into an unbounded list of every low-prior solver. Workers
+        # keep the GLOBAL deadline, which already bounds the whole search;
+        # giving them a shorter per-solver slice truncated legitimately-slow
+        # dedicated solvers (e.g. crockford-base32, base64-swapcase) and
+        # regressed recovery.
+        _rem_budget = max(0.0, ctx.deadline - time.monotonic())
+        _floor = min(len(jobs), max(40, 24 + int(_rem_budget * ctx.speed / 2.0)))
+        jobs = jobs[:_floor]
         precomp = None
         if ctx.pool is not None and ctx.jobs > 1 and len(jobs) >= 2 and len(blob) >= 128 \
                 and fp.get("charset") != "ascii-text":
@@ -653,26 +683,13 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                     for _, it in jobs]
             futures = [ctx.pool.submit(_solver_worker, ar) for ar in args]
             precomp = {it.name: fu for (_, it), fu in zip(jobs, futures)}
-        encoding_classes = {
-            "hex", "base64", "base64url", "base32", "binary", "octal",
-            "decimal", "morse", "url", "quoted-printable", "pem",
-            "a1z26/polybius", "bacon", "polybius",
-        }
-        fingerprints_as_encoding = bool(
-            fp["magic"] or encoding_classes.intersection(fp["classes"])
-        )
         previous_method = chain[-1].split("(", 1)[0].lower() if chain else ""
         for prior, item in jobs:
             if ctx.expired():
                 break
-            if item.name == "monoalphabetic-substitution":
-                # Run only on raw input or on the output of a decoder; a
-                # preceding classical step (caesar, affine, ...) is noise.
-                if chain and any(step.split("(", 1)[0].lower() not in decoder_names
-                                 for step in chain):
-                    continue
-                if fingerprints_as_encoding:
-                    continue
+            # NOTE: the static monoalphabetic-substitution gate is applied
+            # during job collection (above) so skipped solvers never occupy a
+            # pool worker; it is not repeated here.
             if ctx.progress_callback:
                 try:
                     ctx.progress_callback(item.name)
@@ -1156,6 +1173,11 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                     # transposition recoveries may).
                     if not (is_flag or recovered or strong_recovery) and record["confidence"] >= .98:
                         record["confidence"] = .97
+                    # Retain the strongest candidate seen even if it never clears
+                    # the retention gate, so a timeout still surfaces partial
+                    # progress instead of an empty result.
+                    if best_so_far is None or record["confidence"] > best_so_far["confidence"]:
+                        best_so_far = record
                     # Verified exact recovery bookkeeping.
                     # An "exact" recovery is a confirmed decrypt; a flag-shaped row
                     # that merely LOOKS like a flag (e.g. a wrong-key XOR output) is
@@ -1219,15 +1241,18 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                     has_encoding = bool(child_fp.get("magic") or any(
                         score >= .75 for score in child_fp.get("prior_map", {}).values()
                     ))
-                    prior_classical = any(
-                        step.split("(", 1)[0].lower() not in decoder_names for step in chain
+                    # Classical ciphertext output is plain ASCII text (no magic,
+                    # no encoding class), so `has_encoding` alone would never let
+                    # a stacked classical chain (e.g. vigenere -> affine ->
+                    # caesar) continue. Count the classical steps already in the
+                    # chain and allow bounded stacking: a small fixed cap keeps
+                    # combinatorial cipher chains from exploding while letting
+                    # genuine layered classics compose.
+                    child_classical = sum(
+                        1 for s in full_chain
+                        if s.split("(", 1)[0].lower() not in decoder_names
                     )
-                    # Layered encodings are the high-value search graph. A
-                    # classical candidate may continue only when it fingerprints
-                    # as another encoding, avoiding combinatorial cipher chains.
-                    # (Expansion is allowed even after a classical step if the
-                    # output itself is an encoding — e.g. caesar -> base64 -> hex.)
-                    should_expand = decoder or has_encoding
+                    should_expand = decoder or has_encoding or child_classical <= 2
                     if (not recovered and depth < max_depth and out and len(out) <= 10_000_000
                             and should_expand and not ctx.exact_found):
                         digest = hashlib.sha256(out).digest()
@@ -1271,6 +1296,9 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
             ctx.pool.shutdown(wait=False, cancel_futures=True)
         except Exception:
             pass
+    _partial_only = bool(ctx.expired() and best_so_far is not None and not results)
+    if _partial_only:
+        results[best_so_far["_raw"]] = best_so_far
     ranked = sorted(results.values(),
                     key=lambda r: (-bool(r.get("_english_ok") and not r.get("is_flag")),
                                    -r["confidence"],
@@ -1287,7 +1315,7 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                                    -bool(r.get("_subst")), -r.get("_pdelta", 0.0),
                                    r["chain"]))[:max(0, top)]
     if ranked:
-        status = "FOUND"
+        status = "TIMEOUT_PARTIAL" if _partial_only else "FOUND"
     elif ctx.expired():
         status = "TIMEOUT"
     elif ctx.failures:
