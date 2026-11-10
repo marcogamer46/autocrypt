@@ -255,9 +255,8 @@ def solve_wav_lsb(data, ctx):
         if ctx.expired():
             break
         bits = []
-        for i, s in enumerate(samples):
-            if i % channels == 0:
-                bits.append((s >> plane) & 1)
+        for s in samples:
+            bits.append((s >> plane) & 1)
         nbytes = len(bits) // 8
         if nbytes < 4:
             continue

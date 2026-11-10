@@ -156,23 +156,6 @@ def solve_new_caesar(data, ctx):
 
 
 # ------------------------------------------------ byte-level transforms
-@solver("byte-transforms", lambda fp: .3 if fp["length"] >= 8 else 0.0)
-def solve_byte_transforms(data, ctx):
-    """rol/ror/add/sub by k, nibble swap, bit reverse — scored by plaintext model."""
-    raw = data
-    if ctx.depth > 2 or len(raw) < 8 or len(raw) > 100_000 or _printable(raw, .9):
-        return   # already readable text: byte tricks would only create noise
-    rev = lambda b: int(f"{b:08b}"[::-1], 2)
-    cands = [("nibble-swap", bytes(((b << 4) | (b >> 4)) & 255 for b in raw)),
-             ("bit-reverse", bytes(rev(b) for b in raw))]
-    for k in range(1, 8):
-        cands.append((f"rol{k}", bytes(((b << k) | (b >> (8 - k))) & 255 for b in raw)))
-    for k in range(1, 256):
-        cands.append((f"sub{k}", bytes((b - k) & 255 for b in raw)))
-    scored = sorted(((plain_text_score(o), n, o) for n, o in cands if _printable(o, .9)), reverse=True)
-    for i, (sc, n, o) in enumerate(scored[:3]):
-        yield o, f"byte-transform({n})", {"_statistical": i == 0}, max(.5, min(.95, .6 + sc / 20)) if i == 0 else .4
-
 
 # ------------------------------------------------ RC4 with key
 def _rc4(key, data):

@@ -32,7 +32,7 @@ def _plain(m):
 
 # ------------------------------------------------ RSA: shared prime / dp leak
 @solver("RSA-shared-prime", lambda fp: .999 if fp["charset"] == "ascii-text" and len(
-    re.findall(r"\bn\d+\s*=", fp.get("_text", ""))) >= 2 else 0.0)
+    re.findall(r"\bn\d+\s*[:=]", fp.get("_text", ""))) >= 2 else 0.0)
 def solve_shared_prime(data, ctx):
     v = SM._vals(data, ctx)
     ns = {k[1:]: x for k, x in v.items() if re.fullmatch(r"n\d+", k)}
@@ -169,48 +169,11 @@ def solve_lcg(data, ctx):
     yield out.encode(), "Cracked LCG parameters", {"m": m, "a": a, "c": c, "_statistical": True}, .98
 
 
-@solver("mt19937-predict", lambda fp: .8 if fp["charset"] == "ascii-text" and len(
-    fp.get("_text", "").split()) >= 624 and _ints(fp.get("_text", ""), 0, 1 << 32) else 0.0)
-def solve_mt(data, ctx):
-    o = _ints(SM._txt(data), 0, 1 << 32)
-    if not o or len(o) < 624:
-        return
-
-    def untemper(y):
-        y ^= y >> 18
-        y ^= (y << 15) & 0xEFC60000
-        t = y
-        for _ in range(4):
-            t = y ^ ((t << 7) & 0x9D2C5680)
-        y = t
-        t = y
-        for _ in range(3):
-            t = y ^ (t >> 11)
-        return t
-    state = [untemper(x) for x in o[:624]]
-    r = random.Random()
-    r.setstate((3, tuple(state) + (624,), None))
-    ahead = [r.getrandbits(32) for _ in range(len(o) - 624)]
-    if ahead != o[624:]:
-        return                           # extra outputs must match, else not MT
-    nxt = [r.getrandbits(32) for _ in range(5)]
-    yield f"next 32-bit outputs: {nxt}".encode(), "Cracked MT19937 (Python random)", {"_statistical": True}, .98
-
 
 # ------------------------------------------------ hashes
 _HASH = {32: ("md5",), 40: ("sha1",), 56: ("sha224",), 64: ("sha256", "sha3_256"),
          96: ("sha384",), 128: ("sha512",)}
 
-
-@solver("hash-crack", lambda fp: .85 if fp["charset"] == "ascii-text" and any(
-    re.match(r"^\s*(?:(?:md5|sha1|sha224|sha256|sha384|sha512|ntlm|hash)"
-             r"\s*[:=]\s*)?([0-9a-fA-F]{32,128})", ln)
-    for ln in (fp.get("_text", "") or "").splitlines()) else 0.0)
-def solve_hash(data, ctx):
-    # Delegate to the pack7 hash cracker (label-aware + hash->XOR pairing);
-    # keep this registration so imports order does not shadow it.
-    from autocrypt.solvers_pack7 import solve_hash_crack
-    yield from solve_hash_crack(data, ctx)
 
 
 # ------------------------------------------------ ECB detection

@@ -224,31 +224,6 @@ def _shared_prime_prior(fp):
     return .9 if all(re.search(r"\b%s\s*[:=]" % x, t) for x in need) else 0.0
 
 
-@solver("rsa-shared-prime", _shared_prime_prior)
-def solve_shared_prime(data, ctx):
-    try:
-        text = data.decode("ascii")
-    except UnicodeDecodeError:
-        return
-    v = {}
-    for k, val in re.findall(r"\b([A-Za-z_]\w*)\s*[:=]\s*(\d+)", text):
-        v.setdefault(k.lower(), int(val))
-    n1, n2 = v.get("n1"), v.get("n2")
-    c1, c2 = v.get("c1"), v.get("c2")
-    e = v.get("e", 65537)
-    if not (n1 and n2 and c1 is not None and c2 is not None):
-        return
-    p = math.gcd(n1, n2)
-    if p <= 1 or p == n1 or p == n2:
-        return
-    for n, c in ((n1, c1), (n2, c2)):
-        q = n // p
-        phi = (p - 1) * (q - 1)
-        if math.gcd(e, phi) != 1:
-            continue
-        m = pow(c, pow(e, -1, phi), n)
-        yield S._int_plain(m), "RSA shared-prime", {"p": p}, .98
-
 
 # --------------------------------------------------------------- RSA dp/dq
 def _dpdq_prior(fp):
@@ -630,10 +605,13 @@ def solve_mt(data, ctx):
     if len(nums) < 624:
         return
     state = [_mt_untemper(y) & 0xffffffff for y in nums[:624]] + [624]
-    nxt = [_mt_next(state) for _ in range(4)]
-    expect = nums[624:628] if len(nums) >= 628 else None
-    if expect and nxt == expect:
-        yield f"next={nxt[0]},{nxt[1]},{nxt[2]},{nxt[3]}".encode(), "Cracked MT19937", {"predictions": 4}, .98
+    # Verify the recovered state against every provided extra output; an empty
+    # tail (exactly 624 outputs) verifies trivially.
+    for got in nums[624:]:
+        if _mt_next(state) != got:
+            return
+    nxt = [_mt_next(state) for _ in range(5)]
+    yield f"next={nxt[0]},{nxt[1]},{nxt[2]},{nxt[3]},{nxt[4]}".encode(), "Cracked MT19937", {"predictions": 5}, .98
 
 
 # ------------------------------------------------------------- RC4 / AES glue
@@ -1201,14 +1179,23 @@ def _column_key_recover(letters, length, mode):
     return "".join(key)
 
 
-@solver("beaufort", _classical_key_prior)
+def _weave(orig, plain_upper):
+    """Map decrypted uppercase letters back onto orig, preserving case/punctuation."""
+    it = iter(plain_upper)
+    return "".join(
+        ch if not ch.isalpha() else (next(it) if ch.isupper() else next(it).lower())
+        for ch in orig)
+
+
+@solver("beaufort", lambda fp: .25 if fp["charset"] == "ascii-text"
+        and re.search(r'[A-Za-z]{6,}', fp.get("_text", "")) else 0.0)
 def solve_beaufort(data, ctx):
     try:
         text = data.decode("ascii")
     except UnicodeDecodeError:
         return
     letters = "".join(ch for ch in text if ch.isalpha()).upper()
-    if len(letters) < 15:
+    if len(letters) < 10:
         return
     variants = []
     for length in range(1, min(20, len(letters) // 2) + 1):
@@ -1235,21 +1222,23 @@ def solve_beaufort(data, ctx):
         and english_confidence(uniq[0][1]) >= english_confidence(uniq[1][1])
     for i, (_, o, k) in enumerate(uniq[:3]):
         params = {"key": k}
+        woven = _weave(text, o)
         if i == 0 and boost:
             params["_statistical"] = True
-            yield o, "beaufort", params, min(0.95, 0.55 + 0.35 * english_confidence(o))
+            yield woven, "beaufort", params, min(0.95, 0.55 + 0.35 * english_confidence(woven))
         else:
-            yield o, "beaufort", params, max(assess(o)[0], flag_plausibility(o))
+            yield woven, "beaufort", params, max(assess(woven)[0], flag_plausibility(woven))
 
 
-@solver("porta", _classical_key_prior)
+@solver("porta", lambda fp: .20 if fp["charset"] == "ascii-text"
+        and re.search(r'[A-Za-z]{8,}', fp.get("_text", "")) else 0.0)
 def solve_porta(data, ctx):
     try:
         text = data.decode("ascii")
     except UnicodeDecodeError:
         return
     letters = "".join(ch for ch in text if ch.isalpha()).upper()
-    if len(letters) < 15:
+    if len(letters) < 8:
         return
     variants = []
     for length in range(1, min(20, len(letters) // 2) + 1):
@@ -1259,7 +1248,7 @@ def solve_porta(data, ctx):
         out = _porta_decrypt(letters, key)
         if out:
             variants.append((out, key))
-    for k in _VIG_DICT:
+    for k in ["KEY", "SECRET", "AB", "ABC", "ABCD", "ABCDE", "CRYPTO"] + list(_VIG_DICT):
         if ctx.expired():
             return
         out = _porta_decrypt(letters, k)
@@ -1277,11 +1266,12 @@ def solve_porta(data, ctx):
         and english_confidence(uniq[0][1]) >= english_confidence(uniq[1][1])
     for i, (_, o, k) in enumerate(uniq[:3]):
         params = {"key": k}
+        woven = _weave(text, o)
         if i == 0 and boost:
             params["_statistical"] = True
-            yield o, "porta", params, min(0.95, 0.55 + 0.35 * english_confidence(o))
+            yield woven, "porta", params, min(0.95, 0.55 + 0.35 * english_confidence(woven))
         else:
-            yield o, "porta", params, max(assess(o)[0], flag_plausibility(o))
+            yield woven, "porta", params, max(assess(woven)[0], flag_plausibility(woven))
 
 
 # ----------------------------------------------------------- Hill 3x3 with crib
@@ -1525,22 +1515,30 @@ def _byte_transform_prior(fp):
 def solve_byte_transforms(data, ctx):
     n = len(data)
     seen = set()
+
+    def emit(out, name, key):
+        if out in seen:
+            return
+        pr = sum(32 <= b < 127 or b in (9, 10, 13) for b in out) / n
+        if pr >= .9:
+            seen.add(out)
+            score, _ = assess(out)
+            yield out, f"byte-transform({name})", {"key": key}, score
+
+    rev = lambda b: int(f"{b:08b}"[::-1], 2)
+    base = [
+        (bytes(((b << 4) | (b >> 4)) & 255 for b in data), "nibble-swap"),
+        (bytes(rev(b) for b in data), "bit-reverse"),
+    ]
+    for x in range(1, 8):
+        base.append((bytes(((b << x) | (b >> (8 - x))) & 255 for b in data), f"rol{x}"))
+    for out, name in base:
+        yield from emit(out, name, 0)
     for x in range(256):
         if ctx.expired():
             return
-        cands = []
-        cands.append(bytes((b + x) % 256 for b in data))
-        cands.append(bytes((b - x) % 256 for b in data))
-        cands.append(bytes(((b << x) | (b >> (8 - x))) & 0xff for b in data) if x > 0 else data)
-        cands.append(bytes(((b >> x) | (b << (8 - x))) & 0xff for b in data) if x > 0 else data)
-        for out in cands:
-            if out in seen:
-                continue
-            pr = sum(32 <= b < 127 or b in (9, 10, 13) for b in out) / n
-            if pr >= .9:
-                seen.add(out)
-                score, _ = assess(out)
-                yield out, "byte-transform", {"key": x}, score
+        yield from emit(bytes((b + x) % 256 for b in data), f"add{x}", x)
+        yield from emit(bytes((b - x) % 256 for b in data), f"sub{x}", x)
 
 
 # ============================================================ medium pack

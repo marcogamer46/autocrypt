@@ -528,3 +528,12 @@ a non-standard generator or malformed data. See LOGS S40.3.
 - `autocrypt --update` prints the newest LOGS.md changelog section after a
   successful git update ("what's new").
 - Updater + UI-safety suites green. Version 0.10.0.
+- Deduplicated 7 solver registrations; merged lost behavior into keepers.
+- Fixed byte-transforms negative-shift crash; added bit-reverse/nibble-swap.
+- Restored beaufort/porta short-input + case/punctuation-preserving output.
+- MT19937-predict handles 624-output streams; emits 5 predictions.
+- WAV LSB decodes across all channels.
+- RSA shared-prime prior accepts ':' and '='.
+- Full _HELP coverage: all 151 solvers have real descriptions/examples.
+- 33 inaccurate help entries corrected via adversarial audit.
+- Registry: 151 unique names. Suites green. Version 0.10.1.

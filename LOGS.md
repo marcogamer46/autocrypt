@@ -724,3 +724,27 @@ Linux installers so `autocrypt` is a global command, and add
     git update, pulled from the newest LOGS.md changelog entry.
   - Tests: updater + UI-safety suites stay green.
   - Version bumped `0.9.0` → `0.10.0` (`autocrypt/_version.py`).
+
+- S40.12 Registry housekeeping: dedupe + real help descriptions
+  (`autocrypt/solvers_pack7.py`, `solvers_plus.py`, `solvers_mega.py`,
+  `solvers_pack3.py`, `stego.py`, `ui.py`).
+  - Removed 7 duplicate/near-variant solver registrations (beaufort, porta,
+    byte-transforms, mt19937-predict, hash-crack, wav-lsb, rsa-shared-prime),
+    keeping the more general implementation for each and merging the dropped
+    behavior back into the keeper.
+  - Fixed a runtime crash in `byte-transforms` (negative shift count for x>8)
+    and re-added bit-reverse / nibble-swap transforms.
+  - Restored short-input handling for beaufort (>=10 letters) and porta
+    (>=8 letters), plus case/punctuation-preserving output via a new
+    `_weave` helper.
+  - `mt19937-predict` now handles exactly-624-output streams, verifies the
+    whole available tail, and emits 5 predictions (was 4).
+  - WAV LSB now reads bits across all channels, not just channel 0.
+  - RSA shared-prime prior now accepts both `:` and `=` modulus separators.
+  - Filled real one-line descriptions/examples for all 151 registered solvers
+    in `_HELP`; corrected 33 inaccurate/placeholder entries found by an
+    adversarial help audit.
+  - Registry now 151 registered / 151 unique names (was 158 with duplicates).
+  - All modules import; UI-safety, RSA, base64-embedded, and classical-stacking
+    suites stay green.
+  - Version bumped `0.10.0` → `0.10.1` (`autocrypt/_version.py`).

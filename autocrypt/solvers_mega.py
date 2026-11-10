@@ -523,61 +523,6 @@ def solve_hex_le(data, ctx):
 # ===================================================== CLASSICAL CIPHERS ===
 
 # --------------------------------------------------------- Beaufort ---------
-@solver("beaufort", lambda fp: .25 if fp["charset"] == "ascii-text"
-        and re.search(r'[A-Za-z]{6,}', fp.get("_text", "")) else 0.0)
-def solve_beaufort(data, ctx):
-    """Beaufort cipher: C = (K - P) mod 26; reciprocal (encrypt = decrypt).
-    Brute-force key length 1-12 via IC analysis then hill-climb."""
-    text = _text(data)
-    letters = re.sub(r'[^A-Za-z]', '', text).upper()
-    if len(letters) < 10:
-        return
-    best = (0.0, "", "")
-    for klen in range(1, 13):
-        # Estimate key by frequency analysis on each column
-        key = []
-        for col in range(klen):
-            col_chars = letters[col::klen]
-            if not col_chars:
-                continue
-            # For Beaufort: P = (K - C) mod 26 → find K that gives best freq match
-            freq = [0] * 26
-            for ch in col_chars:
-                freq[ord(ch) - 65] += 1
-            # Most likely key letter maximizes chi-squared vs English
-            best_k, best_chi = 0, float('inf')
-            english_freq = [8.2,1.5,2.8,4.3,12.7,2.2,2.0,6.1,7.0,0.2,0.8,4.0,
-                            2.4,6.7,7.5,1.9,0.1,6.0,6.3,9.1,2.8,1.0,2.4,0.2,2.0,0.1]
-            total = sum(freq)
-            for k in range(26):
-                chi = 0.0
-                for c in range(26):
-                    p = (k - c) % 26
-                    expected = english_freq[p] / 100.0 * total
-                    chi += (freq[c] - expected) ** 2 / max(expected, 0.001)
-                if chi < best_chi:
-                    best_chi, best_k = chi, k
-            key.append(chr(best_k + 65))
-        if not key:
-            continue
-        key_str = "".join(key)
-        # Decrypt
-        out_chars = list(text)
-        ki = 0
-        for i, ch in enumerate(text):
-            if ch.isalpha():
-                k = ord(key_str[ki % len(key_str)]) - 65
-                p = (k - (ord(ch.upper()) - 65)) % 26
-                out_chars[i] = chr(p + 65) if ch.isupper() else chr(p + 97)
-                ki += 1
-        out = "".join(out_chars)
-        score, _ = assess(out.encode("utf-8", "replace"))
-        if score > best[0]:
-            best = (score, out, key_str)
-    if best[0] >= .45:
-        yield from _emit(ctx, best[1].encode("utf-8", "replace"),
-                         "Beaufort", {"key": best[2]}, score=best[0])
-
 
 # ----------------------------------------------------------- Bifid ----------
 def _make_polybius(key: str = ""):
@@ -750,39 +695,6 @@ _PORTA_TABLE = [
     "cdefghijklmnopqrstuvwxyzab",  # W/X
     "bcdefghijklmnopqrstuvwxyza",  # Y/Z
 ]
-
-@solver("porta", lambda fp: .20 if fp["charset"] == "ascii-text"
-        and re.search(r'[A-Za-z]{8,}', fp.get("_text", "")) else 0.0)
-def solve_porta(data, ctx):
-    """Porta cipher — try common short keys."""
-    text = _text(data)
-    letters = [c for c in text if c.isalpha()]
-    if len(letters) < 8:
-        return
-    best = (0.0, "", "")
-    for key in ["KEY", "SECRET", "AB", "ABC", "ABCD", "ABCDE", "CRYPTO"]:
-        key_u = key.upper()
-        result = list(text)
-        ki = 0
-        for i, ch in enumerate(text):
-            if not ch.isalpha():
-                continue
-            k = ord(key_u[ki % len(key_u)]) - 65
-            row = k // 2
-            row = min(row, len(_PORTA_TABLE) - 1)
-            alpha = _PORTA_TABLE[row]
-            idx = ord(ch.upper()) - 65
-            if idx < len(alpha):
-                plain_ch = alpha[idx]
-                result[i] = plain_ch.upper() if ch.isupper() else plain_ch
-            ki += 1
-        out = "".join(result)
-        score, _ = assess(out.encode("utf-8", "replace"))
-        if score > best[0]:
-            best = (score, out, key)
-    if best[0] >= .45:
-        yield from _emit(ctx, best[1].encode("utf-8", "replace"),
-                         "Porta", {"key": best[2]}, score=best[0])
 
 
 # ------------------------------------------ Vigenere key-length brute ------
@@ -958,53 +870,6 @@ def solve_docx(data, ctx):
 
 
 # ------------------------------------------------- WAV LSB steganography ---
-@solver("wav-lsb", lambda fp: .50 if fp.get("filetype") == "WAV audio" else 0.0)
-def solve_wav_lsb(data, ctx):
-    """Extract LSB-encoded bytes from WAV PCM samples."""
-    try:
-        import numpy as _np
-    except ImportError:
-        return
-    if len(data) < 44:
-        return
-    # Parse WAV header
-    try:
-        riff, size, wave = struct.unpack_from('<4sI4s', data, 0)
-        if riff != b'RIFF' or wave != b'WAVE':
-            return
-        # Find data chunk
-        offset = 12
-        while offset + 8 <= len(data):
-            chunk_id = data[offset:offset+4]
-            chunk_size = struct.unpack_from('<I', data, offset+4)[0]
-            if chunk_id == b'data':
-                samples_raw = data[offset+8:offset+8+chunk_size]
-                break
-            offset += 8 + chunk_size
-        else:
-            return
-        samples = _np.frombuffer(samples_raw, dtype=_np.int16)
-        bits = (samples & 1).astype(_np.uint8)
-        nbytes = min(len(bits) // 8, 60_000)
-        packed = _np.packbits(bits[:nbytes * 8])
-        raw = packed.tobytes()
-        # Look for flag pattern
-        import re as _re
-        flag_match = _re.search(rb'[A-Za-z0-9_]{2,20}\{[^{}]{1,300}\}', raw)
-        if flag_match:
-            yield from _emit(ctx, flag_match.group(0), "WAV LSB steganography", score=.9)
-            return
-        # Look for null-terminated string
-        null = raw.find(b'\x00')
-        text = raw[:null] if null > 4 else raw[:200]
-        printable = sum(32 <= b < 127 for b in text) / max(1, len(text))
-        if printable >= 0.85 and len(text) >= 4:
-            score, _ = assess(text)
-            if score >= .30:
-                yield from _emit(ctx, text, "WAV LSB steganography", score=score)
-    except Exception:
-        pass
-
 
 # ------------------------------------------- Whitespace / zero-width stego
 _ZW_MAP = {
