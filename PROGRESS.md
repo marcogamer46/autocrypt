@@ -474,3 +474,14 @@ a non-standard generator or malformed data. See LOGS S40.3.
 - New `tests/test_base64_embedded.py` (standard + url-safe embedded recovery,
   prose negative-control). All encoding/UI/factoring regressions pass.
 - Version 0.5.0.
+
+## Session 40.7 — Updater ignores untracked files
+- `autocrypt --update` refused on ANY dirty `git status --porcelain`,
+  including stray untracked files — blocked a user's update on a secondary
+  machine.
+- The dirty guard now disables untracked-file reporting
+  (`--untracked-files=no`): only tracked local modifications refuse; a
+  fast-forward pull proceeds with untracked files present.
+- `tests/test_updater.py` extended: untracked-file-accepted case, and a
+  tracked-modification-still-refuses case.
+- Version 0.6.0.

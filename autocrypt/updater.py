@@ -16,7 +16,8 @@ installed copy was created:
 
 No destructive operation is ever performed: only ``git fetch``,
 ``git pull --ff-only`` and ``pip install --upgrade`` run. In git mode we
-refuse to touch a dirty working tree.
+refuse to touch a working tree with *tracked* local modifications; stray
+untracked files do not block a fast-forward update.
 """
 
 from __future__ import annotations
@@ -94,10 +95,15 @@ def _read_cfg():
 # --------------------------------------------------------------------------
 def _update_git(root: Path):
     """Update a git checkout at ``root``. Returns a process exit code."""
-    dirty = _run(["git", "status", "--porcelain"], cwd=root)
+    # Ignore *untracked* files: a stray scratch/build file (e.g. build/,
+    # .venv/, a loose note) must not block a fast-forward pull. Only tracked
+    # local modifications are dangerous (a pull could conflict with them), so
+    # those still refuse.
+    dirty = _run(["git", "status", "--porcelain", "--untracked-files=no"],
+                 cwd=root)
     if dirty.stdout.strip():
-        print("autocrypt: refusing to update: working tree has uncommitted "
-              "changes (commit or stash first).", file=sys.stderr)
+        print("autocrypt: refusing to update: tracked files have local "
+              "modifications (commit or stash first).", file=sys.stderr)
         return 1
     branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=root)
     branch = branch.stdout.strip() or "main"

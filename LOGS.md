@@ -637,3 +637,14 @@ Linux installers so `autocrypt` is a global command, and add
   - Tests: new `tests/test_base64_embedded.py` (standard + url-safe embedded
     recovery, and a prose negative-control that emits no base64 chain).
   - Version bumped `0.4.0` → `0.5.0` (`autocrypt/_version.py`).
+
+- S40.7 Updater ignores untracked files (`autocrypt/updater.py`).
+  - `autocrypt --update` refused on ANY dirty `git status --porcelain`,
+    including stray untracked files (build/, .venv/, scratch) — blocked a
+    user's update on a secondary machine.
+  - The dirty guard now runs `git status --porcelain --untracked-files=no`:
+    only *tracked* local modifications refuse; untracked files no longer block
+    a fast-forward pull.
+  - Tests: `tests/test_updater.py` extended with an untracked-file-accepted
+    case and a tracked-modification-still-refuses case.
+  - Version bumped `0.5.0` → `0.6.0` (`autocrypt/_version.py`).

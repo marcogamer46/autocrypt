@@ -95,6 +95,48 @@ def main():
             updater._is_editable_install = _orig_editable
         assert code == 1, f"expected exit 1 when reinstall fails, got {code}"
         print("PASS: updater surfaces a failed post-pull reinstall (exit 1)")
+
+        # Untracked scratch files must NOT block a fast-forward update. (The
+        # user hit this as "refusing to update: working tree has uncommitted
+        # changes" from a build/ or stray file.)
+        installed2 = tmp / "installed2"
+        _git("clone", "-q", str(remote), str(installed2), cwd=tmp)
+        (installed2 / "scratch.txt").write_text("local scratch", encoding="utf-8")
+        (upstream / "new3.txt").write_text("new3", encoding="utf-8")
+        _git("add", "new3.txt", cwd=upstream)
+        _git("-c", "user.email=t@t", "-c", "user.name=t",
+             "commit", "-qm", "new3", cwd=upstream)
+        _git("push", "-q", "origin", "main", cwd=upstream)
+        before2 = _git("rev-parse", "HEAD", cwd=installed2)
+        updater._is_editable_install = lambda: True
+        try:
+            code2 = updater._update_git(installed2)
+        finally:
+            updater._is_editable_install = _orig_editable
+        after2 = _git("rev-parse", "HEAD", cwd=installed2)
+        assert code2 == 0, f"expected exit 0 with only untracked files, got {code2}"
+        assert before2 != after2, "untracked file blocked the update"
+        print("PASS: updater ignores untracked files (ff-pull succeeds)")
+
+        # A *tracked* local modification must still refuse (HEAD unchanged).
+        installed3 = tmp / "installed3"
+        _git("clone", "-q", str(remote), str(installed3), cwd=tmp)
+        (installed3 / "seed.txt").write_text("local tracked change", encoding="utf-8")
+        (upstream / "new4.txt").write_text("new4", encoding="utf-8")
+        _git("add", "new4.txt", cwd=upstream)
+        _git("-c", "user.email=t@t", "-c", "user.name=t",
+             "commit", "-qm", "new4", cwd=upstream)
+        _git("push", "-q", "origin", "main", cwd=upstream)
+        before3 = _git("rev-parse", "HEAD", cwd=installed3)
+        updater._is_editable_install = lambda: True
+        try:
+            code3 = updater._update_git(installed3)
+        finally:
+            updater._is_editable_install = _orig_editable
+        after3 = _git("rev-parse", "HEAD", cwd=installed3)
+        assert code3 == 1, f"expected exit 1 with a tracked modification, got {code3}"
+        assert before3 == after3, "tracked modification did not refuse (HEAD moved)"
+        print("PASS: updater still refuses on tracked local modifications")
     return 0
 
 
