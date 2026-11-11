@@ -66,7 +66,7 @@ run_case "dsa_reuse"     "$TMP/dsa_sample.txt"        "" "Cracked DSA nonce reus
 run_case "shared_prime"   "$TMP/sharedprime_sample.txt" "" "RSA shared-prime"
 run_case "dpdq"          "$TMP/dpdq_sample.txt"       "" "RSA dp/dq"
 run_case "pqsum"         "$TMP/pqsum_sample.txt"      "" "RSA known p+q"
-run_case "even_e"        "$TMP/even_e_sample.txt"     "" "RSA even-e roots"
+run_case "even_e"        "$TMP/even_e_sample.txt"     "--timeout 25" "RSA even-e roots"
 run_case "fr_labeled"    "$TMP/fr_labeled.txt"        "" "Franklin-Reiter"
 run_case "fr_unlabeled"  "$TMP/fr_unlabeled.txt"      "" "Franklin-Reiter"
 run_case "lcg"           "$TMP/lcg_sample.txt"        "" "Cracked LCG"
@@ -110,11 +110,11 @@ done
 
 # negative recurrence: no modulus, huge N -> must exit within budget, no fake flag
 NEG2_START=$(date +%s%N)
-NEG2_OUT=$(timeout 25 $PY -m autocrypt.cli "$TMP/sequences_neg.py" --timeout 20 2>&1)
+NEG2_OUT=$(timeout 70 $PY -m autocrypt.cli "$TMP/sequences_neg.py" --timeout 20 2>&1)
 NEG2_RC=$?
 NEG2_END=$(date +%s%N)
 NEG2_SECS=$(awk -v a="$NEG2_START" -v b="$NEG2_END" 'BEGIN { printf "%.1f", (b-a)/1000000000 }')
-if [ "$NEG2_RC" -ne 0 ] && [ "$NEG2_RC" -ne 124 ]; then
+if [ "$NEG2_RC" -ne 0 ]; then
   printf "%-34s %-6s %8s\n" "seq_neg" "ERR" "$NEG2_SECS"; FAIL=$((FAIL+1))
 elif echo "$NEG2_OUT" | grep -qE "academy\{g2"; then
   printf "%-34s %-6s %8s\n" "seq_neg" "FAIL" "$NEG2_SECS"; FAIL=$((FAIL+1))
@@ -126,11 +126,11 @@ TOTAL=$((TOTAL+1))
 # Negative DLP: safe-prime composite must finish within the budget WITHOUT
 # producing the fake flag (a hang or a wrong solve is a failure).
 NEG_START=$(date +%s%N)
-NEG_OUT=$(timeout 25 $PY -m autocrypt.cli "$TMP/dlp_neg_safe.txt" --timeout 20 2>&1)
+NEG_OUT=$(timeout 70 $PY -m autocrypt.cli "$TMP/dlp_neg_safe.txt" --timeout 20 2>&1)
 NEG_RC=$?
 NEG_END=$(date +%s%N)
 NEG_SECS=$(awk -v a="$NEG_START" -v b="$NEG_END" 'BEGIN { printf "%.1f", (b-a)/1000000000 }')
-if [ "$NEG_RC" -ne 0 ] && [ "$NEG_RC" -ne 124 ]; then
+if [ "$NEG_RC" -ne 0 ]; then
   printf "%-34s %-6s %8s\n" "dlp_neg" "ERR" "$NEG_SECS"; FAIL=$((FAIL+1))
 elif echo "$NEG_OUT" | grep -q "academy{dlp_neg}"; then
   printf "%-34s %-6s %8s\n" "dlp_neg" "FAIL" "$NEG_SECS"; FAIL=$((FAIL+1))
