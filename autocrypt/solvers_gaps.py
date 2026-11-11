@@ -17,7 +17,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import math
 import re
+import struct
 
 from autocrypt.core import solver
 from autocrypt.scoring import assess
@@ -172,7 +174,7 @@ def solve_java_random(data, ctx):
 
 # ------------------------------------------------------- JWT RS256->HS256 confusion
 _JWT_RE = re.compile(rb"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?![A-Za-z0-9_-])")
-_PEM_RE = re.compile(rb"-----BEGIN [A-Z ]*PUBLIC KEY-----[\r\n\s]*([A-Za-z0-9+/=]+)[\r\n\s]*-----END [A-Z ]*PUBLIC KEY-----")
+_PEM_RE = re.compile(rb"-----BEGIN [A-Z ]*PUBLIC KEY-----([\s\S]*?)-----END [A-Z ]*PUBLIC KEY-----")
 
 
 def _b64url_decode(s):
@@ -180,9 +182,8 @@ def _b64url_decode(s):
     return base64.urlsafe_b64decode(s)
 
 
-@solver("jwt-key-confusion", lambda fp: .45
-        if fp.get("charset") in ("ascii-text", "mixed") and fp.get("_text") and
-        _JWT_RE.search(data) and _PEM_RE.search(data) else 0.0)
+@solver("jwt-key-confusion", lambda fp: .60
+        if bool(fp.get("prior_map", {}).get("jwt")) and bool(fp.get("prior_map", {}).get("pem")) else 0.0)
 def solve_jwt_key_confusion(data, ctx):
     """Forge/verify a JWT whose alg is asymmetric but whose signature is an
     HMAC keyed with the RSA public key (RS256->HS256 confusion)."""
@@ -190,7 +191,7 @@ def solve_jwt_key_confusion(data, ctx):
     if not pem:
         return
     try:
-        der = base64.b64decode(pem.group(1))
+        der = base64.b64decode(re.sub(rb"\s+", b"", pem.group(1)))
     except Exception:
         return
     if not der:
@@ -221,6 +222,170 @@ def solve_jwt_key_confusion(data, ctx):
                 except Exception:
                     plain = payload.decode("latin-1", "replace")
                 yield from _emit(ctx, plain.encode("utf-8", "replace"),
-                                 "JWT RS256->HS256 key confusion",
+                                 "JWT HS256 key confusion (RS256 header)",
                                  {"alg": alg}, score=.9)
                 return
+
+
+# ------------------------------------------------------- Unicode big-base decode
+def _bigbase_decode(text, base, lo, hi):
+    """Decode a big-integer expressed in `base` where each digit maps to the
+    code point ``lo + digit``. Digits are read most-significant first (the
+    common base100/base65536 writer order); the reverse order is tried too."""
+    digits = [ord(ch) - lo for ch in text if lo <= ord(ch) <= hi]
+    if len(digits) < 4:
+        return None
+    for rev in (False, True):
+        ds = digits[::-1] if rev else digits
+        n = 0
+        for d in ds:
+            n = n * base + d
+        if n <= 0:
+            continue
+        raw = n.to_bytes((n.bit_length() + 7) // 8, "big")
+        cut = raw.find(b"\x00")
+        txt = raw[:cut] if 4 < cut < len(raw) else raw
+        if not txt:
+            continue
+        score, _ = assess(txt)
+        flaggy = re.search(rb"[A-Za-z0-9_]{2,20}\{", txt)
+        if score >= 0.25 or flaggy:
+            return txt, score, rev
+    return None
+
+
+@solver("base100-decode", lambda fp: .45 if fp.get("_han") else 0.0)
+def solve_base100(data, ctx):
+    """base100 (qntm-style): a big integer in base 11172 written as Hangul
+    syllables U+AC00..D7A3."""
+    text = data.decode("utf-8", "replace")
+    r = _bigbase_decode(text, 11172, 0xAC00, 0xD7A3)
+    if r is None:
+        return
+    txt, score, rev = r
+    ctx.findings.append(f"Decoded {len([c for c in text if 0xAC00 <= ord(c) <= 0xD7A3])} "
+                        "Hangul syllables as a base-11172 integer.")
+    yield from _emit(ctx, txt, "base100 (Hangul) decode", {"rev": rev},
+                     score=max(score, 0.35))
+
+
+# ------------------------------------------------------- hash length extension
+# MD5 / SHA-1 length-extension primitives. Given a MAC
+# ``mac = hash(secret || message)`` and the length of the secret, these
+# compute ``hash(secret || message || pad || append)`` without knowing the
+# secret. The auto-detection of a suitable challenge is inherently limited
+# (it needs an oracle/known appended target), so these are exposed as correct,
+# unit-tested helpers rather than an aggressive solver.
+def _rol(x, n):
+    return ((x << n) | (x >> (32 - n))) & 0xFFFFFFFF
+
+
+_MD5_K = [int(abs(math.sin(i + 1)) * 2 ** 32) & 0xFFFFFFFF for i in range(64)]
+_MD5_S = (7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+          5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+          4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+          6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21)
+
+
+def _md5_compress(st, block):
+    a, b, c, d = st
+    m = [int.from_bytes(block[i:i + 4], "little") for i in range(0, 64, 4)]
+    aa, bb, cc, dd = a, b, c, d
+    for i in range(64):
+        if i < 16:
+            f = (b & c) | (~b & d)
+            k = i
+        elif i < 32:
+            f = (d & b) | (~d & c)
+            k = (5 * i + 1) % 16
+        elif i < 48:
+            f = b ^ c ^ d
+            k = (3 * i + 5) % 16
+        else:
+            f = c ^ (b | ~d)
+            k = (7 * i) % 16
+        tmp = (a + f + m[k] + _MD5_K[i]) & 0xFFFFFFFF
+        tmp = _rol(tmp, _MD5_S[i])
+        a, b, c, d = d, (b + tmp) & 0xFFFFFFFF, b, c
+    return ((a + aa) & 0xFFFFFFFF, (b + bb) & 0xFFFFFFFF,
+            (c + cc) & 0xFFFFFFFF, (d + dd) & 0xFFFFFFFF)
+
+
+def _md5_pad(total_len):
+    bitlen = total_len * 8
+    pad = b"\x80"
+    pad += b"\x00" * ((56 - (total_len + 1) % 64) % 64)
+    pad += struct.pack("<Q", bitlen)
+    return pad
+
+
+def _md5_extend(digest, orig_len_bytes, append):
+    """digest = md5(secret || msg) (with its padding already absorbed into the
+    state); orig_len_bytes = len(secret)+len(msg).  Returns
+    md5(secret || msg || pad(orig_len_bytes) || append)."""
+    a, b, c, d = struct.unpack("<4I", digest)
+    # The restored state already includes the padding for orig_len_bytes, so
+    # we resume by hashing `append`; its final block is keyed to the true
+    # total length (including the glue padding and the append itself).
+    total_len = orig_len_bytes + len(_md5_pad(orig_len_bytes)) + len(append)
+    feed = append
+    while len(feed) >= 64:
+        a, b, c, d = _md5_compress((a, b, c, d), feed[:64])
+        feed = feed[64:]
+    last = feed + b"\x80" + b"\x00" * ((56 - (len(feed) + 1) % 64) % 64)
+    last += struct.pack("<Q", total_len * 8)
+    for i in range(0, len(last), 64):
+        a, b, c, d = _md5_compress((a, b, c, d), last[i:i + 64])
+    return struct.pack("<4I", a, b, c, d)
+
+
+_SHA1_K = (0x5A827999, 0x6ED9EBA1, 0x8F1BBCDC, 0xCA62C1D6)
+
+
+def _sha1_compress(st, block):
+    h0, h1, h2, h3, h4 = st
+    w = [int.from_bytes(block[i:i + 4], "big") for i in range(0, 64, 4)]
+    for i in range(16, 80):
+        w.append(_rol(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1))
+    a, b, c, d, e = h0, h1, h2, h3, h4
+    for i in range(80):
+        if i < 20:
+            f = (b & c) | (~b & d)
+            k = _SHA1_K[0]
+        elif i < 40:
+            f = b ^ c ^ d
+            k = _SHA1_K[1]
+        elif i < 60:
+            f = (b & c) | (b & d) | (c & d)
+            k = _SHA1_K[2]
+        else:
+            f = b ^ c ^ d
+            k = _SHA1_K[3]
+        tmp = (_rol(a, 5) + f + e + k + w[i]) & 0xFFFFFFFF
+        e, d, c, b, a = d, c, _rol(b, 30), a, tmp
+    return ((h0 + a) & 0xFFFFFFFF, (h1 + b) & 0xFFFFFFFF,
+            (h2 + c) & 0xFFFFFFFF, (h3 + d) & 0xFFFFFFFF,
+            (h4 + e) & 0xFFFFFFFF)
+
+
+def _sha1_pad(total_len):
+    bitlen = total_len * 8
+    pad = b"\x80"
+    pad += b"\x00" * ((56 - (total_len + 1) % 64) % 64)
+    pad += struct.pack(">Q", bitlen)
+    return pad
+
+
+def _sha1_extend(digest, orig_len_bytes, append):
+    """Counterpart of _md5_extend for SHA-1 (big-endian length)."""
+    h0, h1, h2, h3, h4 = struct.unpack(">5I", digest)
+    total_len = orig_len_bytes + len(_sha1_pad(orig_len_bytes)) + len(append)
+    feed = append
+    while len(feed) >= 64:
+        h0, h1, h2, h3, h4 = _sha1_compress((h0, h1, h2, h3, h4), feed[:64])
+        feed = feed[64:]
+    last = feed + b"\x80" + b"\x00" * ((56 - (len(feed) + 1) % 64) % 64)
+    last += struct.pack(">Q", total_len * 8)
+    for i in range(0, len(last), 64):
+        h0, h1, h2, h3, h4 = _sha1_compress((h0, h1, h2, h3, h4), last[i:i + 64])
+    return struct.pack(">5I", h0, h1, h2, h3, h4)

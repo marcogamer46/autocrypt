@@ -555,3 +555,9 @@ a non-standard generator or malformed data. See LOGS S40.3.
 - **JWT RS256->HS256 key confusion** — asymmetric header verified with the public key as an HMAC secret.
 - **Zero-width delimiter scheme** (ZWJ-separated bits) added to the whitespace stego solver.
 - Still open from the reviewer list: hash length extension, CBC bit-flipping, GCM nonce reuse, IV=key AES, JS obfuscation, Shamir/Paillier/hidden-number, glibc rand/xorshift128+, classical ciphers, esolangs, PNG/GIF/APNG/pcap forensics, base100/base65536.
+## 0.10.4 — gap-filling staples batch 2
+- **base100 (Hangul)** decoding added; fingerprint exposes `_han`/`_cjk`.
+- **MD5/SHA-1 length-extension primitives** implemented and verified (incl. block-crossing final padding).
+- **JWT key-confusion** trigger/robustness fixed (fp-based prior, multi-line PEM, `jwt hs256` method prefix).
+- Verification workflow (4 adversarial agents) validated base100/fingerprint/java-random and surfaced two defects (ext edge case, JWT trigger) that are fixed + re-tested.
+- Still open from reviewer list: base65536 (multi-block CJK spec needs exact mapping; deferred to avoid noisy/wrong decode), CBC bit-flipping, GCM nonce reuse, IV=key AES, JS obfuscation, Shamir/Paillier/hidden-number, glibc rand/xorshift128+, classical ciphers depth, esolangs, PNG/GIF/APNG/pcap forensics.

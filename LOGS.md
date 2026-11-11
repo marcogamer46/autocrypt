@@ -788,3 +788,11 @@ Linux installers so `autocrypt` is a global command, and add
 - Extended `solvers_mega.solve_whitespace_stego` with the zero-width **delimiter scheme** (ZWSP/ZWNJ bits split by ZWJ), tried before the flat bitstream.
 - Tests: `tests/test_gaps.py` (5 cases incl. a java-random negative control). Existing suites re-run: golden vectors 21/21, encoding variants 6/6.
 - Version bumped 0.10.2 → 0.10.3.
+
+## S42.01 — Gap-filling solvers batch 2 (v0.10.4)
+- **base100 (Hangul) decode** (`base100-decode` in `solvers_gaps.py`): a base-11172 big integer written as Hangul syllables U+AC00..D7A3 is decoded back to bytes. `core.fingerprint` now exposes `_han` (and `_cjk`) flags; the ASCII-only `_text` was dropping non-ASCII blocks.
+- **MD5/SHA-1 hash-length-extension primitives** (`_md5_extend`, `_sha1_extend`): correct continuation from a digest state, including multi-block final padding (verified against hashlib over a sweep of append lengths incl. the 56–63-byte block-crossing cases). Exposed as unit-tested helpers; auto-detection of a full length-extension challenge is inherently oracle-dependent and remains documented as open.
+- **JWT RS256→HS256 key confusion** hardened: trigger now uses fingerprint `prior_map` (jwt+pem classes) instead of a bare `data` reference (which silently zeroed the prior); `_PEM_RE` accepts wrapped/multi-line PEM bodies; method relabelled to the `jwt hs256` recovered-attack prefix so the verified payload survives the anti-noise filter and is ranked as a confirmed recovery.
+- Adversarial 4-agent verification workflow ran; it caught the two defects above (extension edge-case bug, JWT trigger NameError + single-line PEM) which were fixed and re-tested. base100, fingerprint flags and java-random passed adversarial review unchanged.
+- Tests: `tests/test_gaps.py` now 10 checks (added base100, md5/sha1 length-extension edge sweeps, wrapped-PEM JWT). 
+- Version bumped 0.10.3 → 0.10.4.

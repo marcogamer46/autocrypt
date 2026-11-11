@@ -474,16 +474,23 @@ def fingerprint(data: bytes) -> dict:
     filetype = detect_filetype(data)
     if filetype and filetype not in magic:
         magic.append(filetype)
-    # Unicode tag characters (U+E0000..E007F) carry hidden ascii; detectable
-    # only via a proper utf-8 decode (the ascii `text` above drops them).
-    _tags = False
+    # Non-ascii blocks that carry hidden payloads, detectable only via a proper
+    # utf-8 decode (the ascii `text` above drops them): Unicode tag characters
+    # (U+E0000..E007F), Hangul syllables (base100, U+AC00..D7A3) and CJK
+    # ideographs (base65536, U+4E00..9FFF).
+    _tags = _han = _cjk = False
     try:
         _u = data.decode("utf-8")
-        _tags = any(0xE0000 <= ord(_c) <= 0xE007F for _c in _u[:4000])
+        if any(0xE0000 <= ord(_c) <= 0xE007F for _c in _u[:4000]):
+            _tags = True
+        if any(0xAC00 <= ord(_c) <= 0xD7A3 for _c in _u[:5000]):
+            _han = True
+        if any(0x4E00 <= ord(_c) <= 0x9FFF for _c in _u[:5000]):
+            _cjk = True
     except Exception:
-        _tags = False
+        pass
     return {
-        "_tags": _tags,
+        "_tags": _tags, "_han": _han, "_cjk": _cjk,
         "length": len(data), "entropy": _entropy(s), "charset": charset,
         "printable": printable, "ic": _ic(s), "classes": classes,
         "hypotheses": sorted(hypotheses.items(), key=lambda x: -x[1]),
