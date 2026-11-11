@@ -269,6 +269,282 @@ def solve_base100(data, ctx):
                      score=max(score, 0.35))
 
 
+# ------------------------------------------------------- esolangs (Brainfuck / Ook!)
+_BF_CHARS = frozenset("<>+-.,[]")
+
+
+def _bf_like(text):
+    """High fraction of brainfuck instruction chars among non-whitespace."""
+    nz = [ch for ch in text if not ch.isspace()]
+    if len(nz) < 20:
+        return False
+    bf = sum(1 for ch in nz if ch in _BF_CHARS)
+    return bf / len(nz) >= 0.90
+
+
+def _bf_run(code, max_steps=400_000):
+    tape = bytearray(30000)
+    p = 0
+    i = 0
+    out = bytearray()
+    jumps = {}
+    stack = []
+    for idx, ch in enumerate(code):
+        if ch == "[":
+            stack.append(idx)
+        elif ch == "]":
+            if not stack:
+                return None
+            s = stack.pop()
+            jumps[s] = idx
+            jumps[idx] = s
+    if stack:
+        return None
+    steps = 0
+    n = len(code)
+    while i < n and steps < max_steps:
+        c = code[i]
+        steps += 1
+        if c == ">":
+            p = (p + 1) % 30000
+        elif c == "<":
+            p = (p - 1) % 30000
+        elif c == "+":
+            tape[p] = (tape[p] + 1) & 0xFF
+        elif c == "-":
+            tape[p] = (tape[p] - 1) & 0xFF
+        elif c == ".":
+            out.append(tape[p])
+        elif c == ",":
+            pass  # no input stream; leave the cell unchanged
+        elif c == "[":
+            if tape[p] == 0:
+                i = jumps[i]
+        elif c == "]":
+            if tape[p] != 0:
+                i = jumps[i]
+        i += 1
+    return bytes(out)
+
+
+def _ook_to_bf(text):
+    mapping = {
+        (".", "?"): ">", ("?", "."): "<",
+        (".", "."): "+", ("!", "!"): "-",
+        ("!", "."): ".", (".", "!"): ",",
+        ("!", "?"): "[", ("?", "!"): "]",
+    }
+    toks = []
+    pos = 0
+    while True:
+        k = text.find("Ook", pos)
+        if k == -1:
+            break
+        # punctuation immediately following "Ook"
+        j = k + 3
+        punct = ""
+        while j < len(text) and text[j] in ".?!":
+            punct += text[j]
+            j += 1
+        if not punct:
+            return None
+        toks.append(punct[0])
+        pos = j
+    if len(toks) < 12 or len(toks) % 2 != 0:
+        return None
+    code = []
+    for t in range(0, len(toks), 2):
+        key = (toks[t], toks[t + 1])
+        if key not in mapping:
+            return None
+        code.append(mapping[key])
+    return "".join(code)
+
+
+@solver("brainfuck", lambda fp: .45
+        if fp.get("charset") in ("ascii-text", "mixed") and fp.get("_text")
+        and _bf_like(fp["_text"]) else 0.0)
+def solve_brainfuck(data, ctx):
+    text = data.decode("utf-8", "replace")
+    code = "".join(ch for ch in text if ch in _BF_CHARS)
+    if not code:
+        return
+    out = _bf_run(code)
+    if not out:
+        return
+    score, _ = assess(out)
+    flaggy = re.search(rb"[A-Za-z0-9_]{2,20}\{", out)
+    if score < 0.2 and not flaggy:
+        return
+    ctx.findings.append(f"Executed a {len(code)}-instruction Brainfuck program "
+                        f"({len(out)} output bytes).")
+    yield from _emit(ctx, out, "Brainfuck esolang interpreter",
+                     {"instructions": len(code)}, score=max(score, 0.35))
+
+
+@solver("ook", lambda fp: .40
+        if fp.get("charset") in ("ascii-text", "mixed") and fp.get("_text")
+        and fp["_text"].count("Ook") >= 12 else 0.0)
+def solve_ook(data, ctx):
+    text = data.decode("utf-8", "replace")
+    code = _ook_to_bf(text)
+    if code is None:
+        return
+    out = _bf_run(code)
+    if not out:
+        return
+    score, _ = assess(out)
+    flaggy = re.search(rb"[A-Za-z0-9_]{2,20}\{", out)
+    if score < 0.2 and not flaggy:
+        return
+    ctx.findings.append(f"Translated {text.count('Ook')} Ook! tokens to Brainfuck and ran it.")
+    yield from _emit(ctx, out, "Ook! esolang interpreter",
+                     {"instructions": len(code)}, score=max(score, 0.35))
+
+
+# ------------------------------------------------------- MT19937 (Python random) clone
+_MT_N = 624
+_MT_M = 397
+_MT_A = 0x9908B0DF
+_MT_U = 11
+_MT_S = 7
+_MT_T = 15
+_MT_L = 18
+_MT_B = 0x9D2C5680
+_MT_C = 0xEFC60000
+_MT_MASK = 0xFFFFFFFF
+
+
+def _mt_temper_word(y):
+    # The MT19937 tempering (matches CPython's genrand_uint32). Kept so the
+    # inverse matrix below can be derived from the exact same linear map.
+    y ^= y >> _MT_U
+    y ^= (y << _MT_S) & _MT_B
+    y ^= (y << _MT_T) & _MT_C
+    y ^= y >> _MT_L
+    return y & _MT_MASK
+
+
+_MT_INV = None
+
+
+def _mt_inverse_matrix():
+    """Compute the 32x32 GF(2) inverse of the tempering once.
+
+    The naive formula-based untemper (reverse-order / doubling accumulations)
+    does NOT invert this exact linear map, so we derive the inverse rigorously
+    from the 32 basis vectors via Gauss-Jordan over GF(2)."""
+    global _MT_INV
+    if _MT_INV is not None:
+        return _MT_INV
+    # M[i] = mask of input bits feeding output bit i.
+    M = [0] * 32
+    for j in range(32):
+        t = _mt_temper_word(1 << j)
+        for i in range(32):
+            if (t >> i) & 1:
+                M[i] |= (1 << j)
+    # Augmented matrix [M | I], 64 columns.
+    rows = []
+    for i in range(32):
+        bits = [0] * 64
+        v = M[i] | (1 << (32 + i))
+        for k in range(64):
+            if (v >> k) & 1:
+                bits[k] = 1
+        rows.append(bits)
+    col = 0
+    for r in range(32):
+        sel = None
+        for rr in range(r, 32):
+            if rows[rr][col]:
+                sel = rr
+                break
+        if sel is None:
+            col += 1
+            continue
+        rows[r], rows[sel] = rows[sel], rows[r]
+        for rr in range(32):
+            if rr != r and rows[rr][col]:
+                rows[rr] = [a ^ b for a, b in zip(rows[rr], rows[r])]
+        col += 1
+    inv = [0] * 32
+    for i in range(32):
+        mask = 0
+        for k in range(32, 64):
+            if rows[i][k]:
+                mask |= (1 << (k - 32))
+        inv[i] = mask
+    _MT_INV = inv
+    return inv
+
+
+def _mt_untemper(y):
+    inv = _mt_inverse_matrix()
+    out = 0
+    for i in range(32):
+        if (y & inv[i]).bit_count() & 1:
+            out |= (1 << i)
+    return out
+
+
+def _mt_next_signed(vals):
+    """Given >=625 32-bit ints (signed or unsigned), clone MT19937 and, if
+    the stream really comes from it, return the next predicted outputs."""
+    u = [v & _MT_MASK for v in vals[:_MT_N]]
+    state = list(u)
+    # untemper into the raw state
+    state = [_mt_untemper(x) for x in state]
+
+    # Apply the reference MT19937 twist (matches CPython's genrand_uint32).
+    # The state must be rotated in three segments: the recurrence reads
+    # state[k+1] and state[k+M] / state[k+(M-N)] in a specific order.
+    def twist():
+        for k in range(_MT_N - _MT_M):
+            y = (state[k] & 0x80000000) | (state[k + 1] & 0x7FFFFFFF)
+            state[k] = state[k + _MT_M] ^ (y >> 1) ^ (_MT_A if y & 1 else 0)
+        for k in range(_MT_N - _MT_M, _MT_N - 1):
+            y = (state[k] & 0x80000000) | (state[k + 1] & 0x7FFFFFFF)
+            state[k] = state[k + (_MT_M - _MT_N)] ^ (y >> 1) ^ (_MT_A if y & 1 else 0)
+        y = (state[_MT_N - 1] & 0x80000000) | (state[0] & 0x7FFFFFFF)
+        state[_MT_N - 1] = state[_MT_M - 1] ^ (y >> 1) ^ (_MT_A if y & 1 else 0)
+
+    twist()
+    next_vals = []
+    for k in range(8):
+        y = state[k]
+        y ^= y >> _MT_U
+        y ^= (y << _MT_S) & _MT_B
+        y ^= (y << _MT_T) & _MT_C
+        y ^= y >> _MT_L
+        next_vals.append(y & _MT_MASK)
+    if len(vals) > _MT_N:
+        # verify against the real next outputs if provided
+        real_next = [v & _MT_MASK for v in vals[_MT_N:_MT_N + 8]]
+        if next_vals[: len(real_next)] != real_next:
+            return None
+    return next_vals
+
+
+@solver("mt19937-clone", lambda fp: .35
+        if fp.get("charset") in ("ascii-text", "mixed") and fp.get("_text")
+        and len(re.findall(r"-?\d+", fp["_text"])) >= 625 else 0.0)
+def solve_mt19937(data, ctx):
+    text = data.decode("utf-8", "replace")
+    vals = [int(x) for x in re.findall(r"-?\d+", text)]
+    if len(vals) < 625:
+        return
+    nxt = _mt_next_signed(vals)
+    if nxt is None:
+        return
+    signed = [v - (1 << 32) if v >= (1 << 31) else v for v in nxt]
+    ctx.findings.append("Recovered a 624-word MT19937 state; next 32-bit outputs predicted.")
+    note = ("MT19937 state recovered; next outputs: "
+            + ", ".join(str(x) for x in signed))
+    yield from _emit(ctx, note.encode(), "MT19937 PRNG clone",
+                     {"matched": len(vals)}, score=.3)
+
+
 # ------------------------------------------------------- hash length extension
 # MD5 / SHA-1 length-extension primitives. Given a MAC
 # ``mac = hash(secret || message)`` and the length of the secret, these

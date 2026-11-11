@@ -796,3 +796,10 @@ Linux installers so `autocrypt` is a global command, and add
 - Adversarial 4-agent verification workflow ran; it caught the two defects above (extension edge-case bug, JWT trigger NameError + single-line PEM) which were fixed and re-tested. base100, fingerprint flags and java-random passed adversarial review unchanged.
 - Tests: `tests/test_gaps.py` now 10 checks (added base100, md5/sha1 length-extension edge sweeps, wrapped-PEM JWT). 
 - Version bumped 0.10.3 → 0.10.4.
+
+## S43.01 — Gap-filling solvers batch 3 (v0.10.5)
+- **esolangs added** in `solvers_gaps.py`: Brainfuck interpreter (`brainfuck`) and Ook! interpreter (`ook`). `_ook_to_bf` maps every `Ook<punct>` token pair (2 tokens per instruction) to Brainfuck; both interpreters are gated on a high fraction of Brainfuck instruction characters / a minimum `Ook` token count so prose never triggers them.
+- **MT19937 (Python random) clone** (`mt19937-clone`): recovers the 624-word state from ≥625 consecutive 32-bit outputs (untemper -> twist -> predict next 8, verified against the real tail). The untemper is derived rigorously as a 32x32 GF(2) matrix inverse of the exact CPython tempering — formula-based reversals (naive reverse-order, doubling accumulations) provably do not invert this map and were rejected during development.
+- Tests: `tests/test_gaps.py` now 14 checks (brainfuck, ook, mt19937-clone, mt19937 negative control, plus the earlier 10). Auxiliary standalone verification: bf/ook round-trips; MT clone matches `random.Random` streams at two seeds; negative control returns None.
+- Regression: golden vectors 21/21, encoding variants 6/6 unchanged.
+- Version bumped 0.10.4 -> 0.10.5.

@@ -18,6 +18,7 @@ import json
 import base64
 import hmac
 import hashlib
+import random
 import subprocess
 import tempfile
 from pathlib import Path
@@ -91,6 +92,30 @@ def _rnd_ints(seed, n):
     return out
 
 
+_BF_TO_OOK = {">": ".?", "<": "?.", "+": "..", "-": "!!",
+               ".": "!.", ",": ".!", "[": "!?", "]": "?!"}
+
+
+def _bf_to_ook(code):
+    # Each Brainfuck instruction is a pair of Ook! tokens ("Ook." "Ook?" ...).
+    toks = []
+    for c in code:
+        p1, p2 = _BF_TO_OOK[c]
+        toks.append("Ook" + p1)
+        toks.append("Ook" + p2)
+    return " ".join(toks)
+
+
+def _bf_print(s):
+    """A Brainfuck program that prints ``s`` (per-char increment) output)."""
+    return "".join("+" * ord(ch) + ".>" for ch in s)
+
+
+def _mt_stream(seed, n):
+    rng = random.Random(seed)
+    return [rng.getrandbits(32) for _ in range(n)]
+
+
 def _jwt(secret, flag):
     def b64u(b):
         return base64.urlsafe_b64encode(b).rstrip(b"=")
@@ -162,6 +187,24 @@ def main():
     print(f"{'sha1-length-extension':24} {'PASS' if sha1_ok else 'FAIL'} (bad={sha1_bad})")
     failed |= not md5_ok
     failed |= not sha1_ok
+
+    # ---- Brainfuck interpreter
+    flag6 = "academy{bf_esolang}"
+    bf_code = _bf_print(flag6)
+    failed |= not _case("brainfuck", bf_code, flag6)
+
+    # ---- Ook! interpreter (spaced token form)
+    ook_prog = _bf_to_ook(bf_code)
+    failed |= not _case("ook", ook_prog, flag6)
+
+    # ---- MT19937 (Python random) clone: 633 outputs -> next-8 prediction
+    mt_vals = _mt_stream(20241111, 633)
+    mt_text = "Random stream: " + ", ".join(str(v) for v in mt_vals)
+    failed |= not _case_marker("mt19937-clone", mt_text, "MT19937")
+
+    # ---- MT19937 negative control: sequential pseudo-ints must NOT fire
+    seq = ", ".join(str(i) for i in range(700))
+    failed |= not _case_marker("mt19937-negative", seq, "MT19937", expect=False)
 
     return 1 if failed else 0
 

@@ -561,3 +561,7 @@ a non-standard generator or malformed data. See LOGS S40.3.
 - **JWT key-confusion** trigger/robustness fixed (fp-based prior, multi-line PEM, `jwt hs256` method prefix).
 - Verification workflow (4 adversarial agents) validated base100/fingerprint/java-random and surfaced two defects (ext edge case, JWT trigger) that are fixed + re-tested.
 - Still open from reviewer list: base65536 (multi-block CJK spec needs exact mapping; deferred to avoid noisy/wrong decode), CBC bit-flipping, GCM nonce reuse, IV=key AES, JS obfuscation, Shamir/Paillier/hidden-number, glibc rand/xorshift128+, classical ciphers depth, esolangs, PNG/GIF/APNG/pcap forensics.
+## 0.10.5 — gap-filling staples batch 3
+- **Brainfuck / Ook! interpreters** added (esolang solvers), gated on tight prior heuristics.
+- **MT19937 (Python random) clone** — untemper via rigorous 32x32 GF(2) matrix inverse of the CPython tempering; predicts the next 8 outputs from 624 observed values (verified against real `random.Random` streams; negative control fires nothing).
+- `tests/test_gaps.py` extended to 14 checks; golden vectors 21/21 and encoding variants 6/6 stay green.
