@@ -141,7 +141,7 @@ def analyze_source(src: str):
     try:
         tree = ast.parse(src)
     except SyntaxError as exc:
-        return consts, labels, [f"source not parseable: {exc.msg}"], set(), {}, {}
+        return consts, labels, [f"source not parseable: {exc.msg}"], set(), {}, {}, byte_pads
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
             v = _number(node.value)
@@ -283,7 +283,7 @@ def _hint_lines(text, consts, byte_hints, dlp_hint):
         for nm, rx in (
                 ("p", r"(?im)^\s*p\s*=\s*((?:0x)?[0-9a-fA-F]+)"),
                 ("g", r"(?im)^\s*g\s*=\s*((?:0x)?[0-9a-fA-F]+)"),
-                ("A", r"(?im)^\s*A\s*=\s*((?:0x)?[0-9a-fA-F]+)"),
+                ("A", r"(?m)^\s*A\s*=\s*((?:0x)?[0-9a-fA-F]+)"),
                 ("B", r"(?im)^\s*B\s*=\s*((?:0x)?[0-9a-fA-F]+)"),
                 ("enc", r"(?im)^\s*(?:ct|c|enc)\s*=\s*((?:0x)?[0-9a-fA-F]+)")):
             m = re.search(rx, text)
@@ -332,10 +332,8 @@ def load(paths):
                       or bool(re.search(r"[a-fA-F]", raw))
                       or k in hex_labels)
             if raw.lower().startswith("0x"):
-                val = int(raw, 16)
                 labeled_lines.append(f"{k}=0x{raw[2:]}")
             elif is_hex:
-                val = int(raw, 16)
                 labeled_lines.append(f"{k}=0x{raw}")
             else:
                 val = int(raw, 10)
@@ -354,6 +352,10 @@ def load(paths):
     # matched by the hex token regex and corrupt label<->value alignment
     # (seen on c10's broadcast output, where the labels/values stopped lining up).
     stripped = re.sub(r"(?m)^\s*[A-Za-z_]\w*\s*=\s*", "", text)
+    # Strip `0x` hex prefixes so a token like `0xdeadbeef` is not split by the
+    # hex token regex into `['0', 'deadbeef']` (a spurious `0` that shifts
+    # label<->value alignment). Only strip when a hex digit run follows.
+    stripped = re.sub(r"0[xX](?=[0-9a-fA-F])", "", stripped)
     # Only value-like tokens (must contain a digit). Prose words in banner
     # text such as "params:" otherwise contribute spurious all-letter tokens
     # ("p","a","a") that break label<->token alignment for tuple/list prints.

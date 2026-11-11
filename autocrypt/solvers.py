@@ -890,7 +890,8 @@ def solve_flag_body_decode(data, ctx):
         cf = f"{prefix}{{{db}}}"
         best.append((flag_plausibility(cf), english_confidence(db), db,
                      "flag-body atbash"))
-    for word in _VIG_BUILTIN_KEYS + list(ctx.wordlist[:200]):
+    for word in _VIG_BUILTIN_KEYS + [w for w in ctx.wordlist[:200]
+                                      if isinstance(w, str) and w.isascii() and w.isalpha()]:
         db = _flag_body_vig_decrypt(body, word)
         if db != body:
             cf = f"{prefix}{{{db}}}"
@@ -1093,12 +1094,13 @@ def solve_autokey(data, ctx):
     if ctx.known_plaintext:
         crib = [ord(c.lower()) - 97 for c in ctx.known_plaintext if c.lower() in string.ascii_lowercase]
         if crib:
-            for size in range(1, min(32, len(crib)) + 1):
+            for size in range(1, min(32, len(crib), len(vals)) + 1):
                 key = [(vals[i] - crib[i]) % 26 for i in range(min(size, len(crib)))]
                 if len(key) == size:
                     primers.append(key)
     primers.extend([[ord(c) - 97 for c in word] for word in
-                    ("KEY", "LEMON", "SECRET", "ORANGE", "CRYPTO")])
+                    ("KEY", "LEMON", "SECRET", "ORANGE", "CRYPTO")
+                    if len(word) <= len(vals)])
     seen = set()
     for key in primers:
         if not key or tuple(key) in seen:
@@ -2588,7 +2590,8 @@ def solve_hash(data, ctx):
     ctx.findings.append(f"Hash fingerprint: {kind}.")
     if not ctx.wordlist:
         return
-    target = data.strip().decode("ascii", "ignore").lower()
+    target_bytes = data.strip()
+    target = target_bytes.decode("ascii", "ignore").lower()
     if kind == "bcrypt" and _bcrypt is None:
         ctx.findings.append("bcrypt identified; wordlist cracking needs the optional bcrypt module.")
         return
@@ -2603,7 +2606,9 @@ def solve_hash(data, ctx):
                 ctx.findings.append("bcrypt cost is too high for a bounded wordlist attempt.")
                 return
             try:
-                if _bcrypt.checkpw(raw, target.encode()):
+                # bcrypt hashes are case-sensitive; use the original bytes,
+                # not the lowercased copy used for hex digest comparison.
+                if _bcrypt.checkpw(raw, target_bytes):
                     yield from _emit(ctx, raw, "cracked bcrypt", {"word": raw.decode("utf-8", "replace")})
                     return
             except (ValueError, TypeError):
@@ -3261,10 +3266,10 @@ def solve_rsa(data, ctx):
 # More encodings/ciphers and image/file steganography, kept in their own
 # modules; importing here registers them into the same REGISTRY.
 import autocrypt.solvers_extra  # noqa: E402,F401
-import autocrypt.solvers_gaps  # noqa: E402,F401
 import autocrypt.stego  # noqa: E402,F401
 import autocrypt.solvers_mega  # noqa: E402,F401
 import autocrypt.solvers_more  # noqa: E402,F401
+import autocrypt.solvers_gaps  # noqa: E402,F401
 import autocrypt.solvers_plus  # noqa: E402,F401
 import autocrypt.solvers_pack3  # noqa: E402,F401
 import autocrypt.solvers_pack5  # noqa: E402,F401
@@ -3323,11 +3328,14 @@ def _g2_offset_of(node, argname, consts):
         left, op, right = node.left, node.op, node.right
         if isinstance(left, ast.Name) and left.id == argname:
             c = _g2_safe_eval(right, consts)
-            if c is not None:
-                return c if isinstance(op, ast.Sub) else -c if isinstance(op, ast.Add) else None
+            off = c if isinstance(op, ast.Sub) else -c if isinstance(op, ast.Add) else None
+            # Reject negative offsets (invalid index deltas).
+            if off is not None and off >= 0:
+                return off
         if isinstance(right, ast.Name) and right.id == argname and isinstance(op, ast.Sub):
             c = _g2_safe_eval(left, consts)
-            return c if c is not None else None
+            if c is not None and c >= 0:
+                return c
     return _g2_safe_eval(node, consts)
 
 
@@ -3585,7 +3593,7 @@ def solve_linear_recurrence(data, ctx):
                 continue
             out = bytes(c ^ key[i % len(key)] for i, c in enumerate(enc))
             pr = sum(32 <= b < 127 or b in (9, 10, 13) for b in out) / max(1, len(out))
-            if verif and hexd == verif and verified_fallback is None:
+            if verif and hexd == verif and verified_fallback is None and pr >= 0.9:
                 verified_fallback = out
             if pr >= 0.9:
                 yield out, "Cracked linear-recurrence + hash-xor", {"hash": name}, .99
@@ -3846,12 +3854,14 @@ def _ec_parse_ints(text):
     for m in _EC_KEY_RE.finditer(text):
         k, raw = m.group(1).lower(), m.group(2)
         try:
-            num = int(raw, 16) if raw.lower().startswith("0x") else int(raw, 16)
-        except ValueError:
-            try:
+            if raw.lower().startswith("0x"):
+                num = int(raw, 16)
+            elif re.search(r"[a-fA-F]", raw):
+                num = int(raw, 16)
+            else:
                 num = int(raw, 10)
-            except ValueError:
-                continue
+        except ValueError:
+            continue
         v[k] = num
     return v
 

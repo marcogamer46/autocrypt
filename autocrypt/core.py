@@ -92,6 +92,10 @@ REGISTRY: list[Solver] = []
 def solver(name: str, matches: MatchFn):
     """Register a solver. A new solver only needs a match rule and generator."""
     def decorate(fn: SolverFn):
+        # Register under `name`, replacing any earlier solver that claimed the
+        # same name (newest registration wins, so an improved implementation
+        # supersedes an older one instead of duplicating effort).
+        REGISTRY[:] = [s for s in REGISTRY if s.name != name]
         REGISTRY.append(Solver(name, matches, fn))
         return fn
     return decorate
@@ -166,8 +170,14 @@ def _solver_worker(args):
         for o, m, p, sc in solver.solve(blob, ctx):
             if len(out) >= 128:
                 break
-            out.append((o if isinstance(o, bytes) else str(o).encode("utf-8", "replace"),
-                        str(m), dict(p or {}), float(sc)))
+            # Convert each candidate independently: a single malformed yield
+            # (non-bytes object, non-numeric score, non-mapping params) must
+            # not abort the whole solver run — skip it and continue.
+            try:
+                ob = o if isinstance(o, bytes) else str(o).encode("utf-8", "replace")
+                out.append((ob, str(m), dict(p or {}), float(sc)))
+            except (TypeError, ValueError):
+                continue
     except Exception as e:  # noqa: BLE001
         if isinstance(e, _BUG_TYPES):
             return name, [], f"[BUG {type(e).__name__}] {e!r}"
@@ -478,19 +488,17 @@ def fingerprint(data: bytes) -> dict:
     # utf-8 decode (the ascii `text` above drops them): Unicode tag characters
     # (U+E0000..E007F), Hangul syllables (base100, U+AC00..D7A3) and CJK
     # ideographs (base65536, U+4E00..9FFF).
-    _tags = _han = _cjk = False
+    _tags = _han = False
     try:
         _u = data.decode("utf-8")
         if any(0xE0000 <= ord(_c) <= 0xE007F for _c in _u[:4000]):
             _tags = True
         if any(0xAC00 <= ord(_c) <= 0xD7A3 for _c in _u[:5000]):
             _han = True
-        if any(0x4E00 <= ord(_c) <= 0x9FFF for _c in _u[:5000]):
-            _cjk = True
     except Exception:
         pass
     return {
-        "_tags": _tags, "_han": _han, "_cjk": _cjk,
+        "_tags": _tags, "_han": _han,
         "length": len(data), "entropy": _entropy(s), "charset": charset,
         "printable": printable, "ic": _ic(s), "classes": classes,
         "hypotheses": sorted(hypotheses.items(), key=lambda x: -x[1]),
