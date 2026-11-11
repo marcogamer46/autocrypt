@@ -122,7 +122,8 @@ def _roots_mod_prime(poly, P):
     if deg_ok(g) <= 0:
         sqfree = f
     else:
-        sqfree = poly_rem(f, g, P)
+        # squarefree = f / gcd(f, f')  (the quotient, not the remainder).
+        sqfree, _ = poly_divmod(f, g, P)
     factors = split_linear(sqfree, P)
     roots = []
     for fac in factors:

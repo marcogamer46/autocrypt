@@ -105,6 +105,16 @@ def wake_up(cmd: list, timeout: int) -> int:
         )
         proc.communicate(input=WAKE_MESSAGE + "\n", timeout=timeout)
         return proc.returncode or 0
+    except subprocess.TimeoutExpired:
+        # The child is still alive after the timeout; kill it so we don't
+        # leak a wedged session process.
+        try:
+            proc.kill()
+            proc.wait()
+        except Exception:  # noqa: BLE001
+            pass
+        print("[watcher] wake_up timed out; killed child session", flush=True)
+        return -1
     except Exception as e:  # noqa: BLE001
         print(f"[watcher] wake_up failed: {e}", flush=True)
         return -1

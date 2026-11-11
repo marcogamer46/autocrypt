@@ -373,6 +373,11 @@ def solve_franklin_reiter(data, ctx):
     # be proper residues mod N.
     if N.bit_length() < 128 or c1 >= N or c2 >= N:
         return
+    if b == 0:
+        # Additive Franklin-Reiter requires a nonzero b; with b=0 the two
+        # messages share a constant factor and the polynomial-gcd approach
+        # degenerates (division by zero / garbage). Bail.
+        return
     if e == 3 and b % N != 0:
         # m2 = a*m + b: subtract a^3*(m^3-c1) from (a*m+b)^3-c2 -> quadratic Q;
         # multiply Q by m and substitute m^3=c1 for a second quadratic; the
@@ -408,10 +413,10 @@ def _lcg_recover(outputs):
     if len(outputs) < 6:
         return None
     g = 0
-    for i in range(len(outputs) - 2):
+    for i in range(len(outputs) - 3):
         t0 = outputs[i + 1] - outputs[i]
         t1 = outputs[i + 2] - outputs[i + 1]
-        t2 = outputs[i + 3] - outputs[i + 2] if i + 3 < len(outputs) else t1
+        t2 = outputs[i + 3] - outputs[i + 2]
         v = abs(t2 * t0 - t1 * t1)
         g = math.gcd(g, v)
     if g <= 1:

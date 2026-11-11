@@ -23,6 +23,7 @@ untracked files do not block a fast-forward update.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -144,6 +145,13 @@ def _update_git(root: Path):
         return 1
     head = _run(["git", "rev-parse", "HEAD"], cwd=root).stdout.strip()
     up = _run(["git", "rev-parse", f"origin/{branch}"], cwd=root).stdout.strip()
+    if not up:
+        # Fetch succeeded but the remote ref is missing (renamed/removed
+        # branch, or a bare mirror). Report instead of failing cryptically
+        # in the pull below.
+        print(f"autocrypt: remote branch 'origin/{branch}' not found after fetch.",
+              file=sys.stderr)
+        return 1
     old = current_version() or head[:7]
     if head == up:
         print(f"autocrypt: already latest ({old}).")
@@ -200,7 +208,10 @@ def _update_pip():
         cfg = _read_cfg()
         if cfg and cfg.get("repo"):
             repo = Path(cfg["repo"])
-            if repo.is_dir() and _find_git_root(repo):
+            # Trust the recorded clone root only when it is *itself* a git
+            # root. _find_git_root(repo) could walk up to an unrelated
+            # ancestor repository and update the wrong project.
+            if repo.is_dir() and (repo / ".git").exists():
                 return _update_git(repo)
         print("autocrypt: cannot determine how this install was created; "
               "update with: pip install --upgrade autocrypt", file=sys.stderr)
@@ -245,7 +256,7 @@ def _update_pip():
         # us to the old commit forever; strip it to fetch latest.
         url = _strip_vcs_ref(url)
     spec = f"autocrypt @ {url}"
-    print(f"autocrypt: installing {spec}")
+    print(f"autocrypt: installing {_redact(spec)}")
     r = subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", spec])
     if r.returncode != 0:
         # Normalize to the documented exit 1 (updatable-failure): 2 is
@@ -256,6 +267,11 @@ def _update_pip():
         return 1
     print(f"autocrypt: updated from {old} -> {current_version()}.")
     return 0
+
+
+def _redact(text):
+    """Redact `user:password@` credentials in a URL/command string."""
+    return re.sub(r"(://[^:/@]+):([^@]+)@", r"\1:****@", text)
 
 
 def _strip_vcs_ref(url):

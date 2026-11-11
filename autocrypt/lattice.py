@@ -205,8 +205,10 @@ def _coppersmith_try(n, a, X, mm, tt, check):
         return None  # aborted by deadline check
 
     # Try several shortest vectors; each yields an H(r) = 0 polynomial.
-    D = len(reduced[0]) - 1  # max degree in scaled variable
+    # Reset the degree per vector — the while-loop below shrinks D, and
+    # carrying that shrink into the next vector would read/misindex its H.
     for vec in reduced[:6]:
+        D = len(reduced[0]) - 1  # max degree in scaled variable
         H = [0] * (D + 1)
         for k in range(D + 1):
             H[k] = vec[k] * X ** (D - k)

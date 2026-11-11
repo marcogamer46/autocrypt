@@ -173,6 +173,11 @@ _SCD_LAYOUTS = [
 
 
 def _scd_decrypt(digits, blanks, top, row1, row2):
+    # A straddling checkerboard always has 8 top slots and two 10-entry
+    # gutter rows (one per blank digit). Enforce the shape so a malformed
+    # layout can't index out of range or mis-map a gutter row.
+    if len(top) != 8 or len(row1) != 10 or len(row2) != 10:
+        return None
     top_map = {d: ch for d, ch in zip((i for i in range(10) if i not in blanks), top)}
     if len(top_map) != len(top):
         return None
@@ -486,11 +491,13 @@ def solve_ecdsa_reuse(data, ctx):
 
 
 # --------------------------------------------------- Merkle-Hellman knapsack
-def _subsetsum_mitm(vals, target):
+def _subsetsum_mitm(vals, target, ctx=None):
     n = len(vals)
     h = n // 2
     left = {}
     for mask in range(1 << h):
+        if ctx is not None and ctx.expired():
+            return None
         s = 0
         mm = mask
         j = 0
@@ -501,6 +508,8 @@ def _subsetsum_mitm(vals, target):
             j += 1
         left.setdefault(s, mask)
     for mask2 in range(1 << (n - h)):
+        if ctx is not None and ctx.expired():
+            return None
         s2 = 0
         mm = mask2
         j = 0
@@ -572,7 +581,7 @@ def solve_merkle_hellman(data, ctx):
             mask = _greedy_superinc(red, t)
             how = "superincreasing"
     if mask is None:
-        mask = _subsetsum_mitm(vals, c)
+        mask = _subsetsum_mitm(vals, c, ctx)
         how = "meet-in-the-middle"
     if mask is None:
         return
@@ -680,7 +689,10 @@ def solve_enigma(data, ctx):
     for k, val in re.findall(r"\b([A-Za-z_]\w*)\s*[:=]\s*([^\n\r]+)", text):
         v.setdefault(k.lower(), val.strip())
     names = re.findall(r"[IVX]+", v.get("rotors", "") or v.get("enigma_rotors", ""))
-    names = [n for n in names if n in _ENIGMA_ROTORS] or ["I", "II", "III"]
+    names = [n for n in names if n in _ENIGMA_ROTORS]
+    # Always pad to exactly three rotors; rings/positions assume length 3,
+    # and fewer rotors would silently drop settings (zip truncation).
+    names = (names + ["I", "II", "III"])[:3]
     rings = [ord(c) - 65 for c in v.get("rings", "AAA")[:3]]
     positions = [ord(c) - 65 for c in v.get("positions", v.get("pos", "AAA"))[:3]]
     reflector = v.get("reflector", "B").upper()

@@ -5,6 +5,7 @@ import collections
 import math
 import re
 import string as _string
+import sys
 from pathlib import Path
 
 _PASSAGE = """
@@ -157,14 +158,20 @@ def _build_table() -> dict[str, int]:
         try:
             raw = path.read_text(encoding="ascii", errors="ignore")
             table: dict[str, int] = {}
+            matched = 0
             for line in raw.splitlines():
                 match = re.match(r"\s*([A-Za-z]{4})\s*[,:\s]\s*(\d+)\s*$", line)
                 if match:
+                    matched += 1
                     table[match.group(1).lower()] = int(match.group(2))
-            if table:
+            if matched:
                 return table
-            letters = _letters(raw)
-            return dict(collections.Counter(letters[i:i + 4] for i in range(len(letters) - 3)))
+            # File exists but holds no parseable rows -> malformed; warn and
+            # skip it rather than silently building a table from junk.
+            sys.stderr.write(
+                f"autocrypt: warning: {path.name} has no parseable quadgram "
+                f"rows (malformed?); ignoring it\n")
+            continue
         except OSError:
             pass
     sample = _letters(_ENGLISH_SAMPLE)
@@ -277,6 +284,11 @@ def _leet_word_variants(tok: str) -> list[str]:
             choices.append(ch.translate(_LEET_TBL))
         else:
             choices.append(ch)
+    # Bound combinatorial expansion: >12 ambiguous positions (2-way choices
+    # each) gives >= 4096 variants, which blows the candidate budget. Fall
+    # back to canonical spellings (1->i, 3->e) in that case.
+    if sum(1 for c in choices if len(c) > 1) > 12:
+        choices = [c[0] if len(c) > 1 else c for c in choices]
     cands = [""]
     for ch_set in choices:
         cands = [c + ch for c in cands for ch in ch_set]

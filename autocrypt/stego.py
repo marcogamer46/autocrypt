@@ -224,6 +224,8 @@ def _wav_data(data):
     if data[:4] != b"RIFF" or data[8:12] != b"WAVE":
         return None
     pos = 12
+    bps = None
+    channels = None
     while pos + 8 <= len(data):
         size = int.from_bytes(data[pos + 4:pos + 8], "little")
         if data[pos:pos + 4] == b"fmt ":
@@ -232,6 +234,9 @@ def _wav_data(data):
                 bps = int.from_bytes(fmt[14:16], "little")
                 channels = int.from_bytes(fmt[2:4], "little")
         elif data[pos:pos + 4] == b"data":
+            # Without a fmt chunk we cannot know bit depth / channels -> bail.
+            if bps is None or channels is None:
+                return None
             return data[pos + 8:pos + 8 + size], bps, channels
         pos += 8 + size + (size & 1)
     return None

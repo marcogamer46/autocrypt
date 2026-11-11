@@ -60,7 +60,9 @@ def _base45_decode(text: str) -> bytes:
         else 0.0)
 def solve_base45(data, ctx):
     try:
-        text = data.decode("ascii").strip()
+        # Only trailing/leading CR/LF are transport noise; base45 has no
+        # other whitespace, so a broad .strip() could hide malformed padding.
+        text = data.decode("ascii").strip("\r\n")
     except UnicodeDecodeError:
         return
     if not text or any(c not in _B45_INDEX for c in text):

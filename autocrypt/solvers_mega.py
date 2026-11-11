@@ -242,15 +242,18 @@ def solve_rot5(data, ctx):
         and re.search(r'[A-Za-z]', fp.get("_text", ""))
         and re.search(r'\d', fp.get("_text", "")) else 0.0)
 def solve_rot18(data, ctx):
-    """ROT18 = ROT13 (alpha) + ROT5 (digits)."""
+    """ROT18 = ROT13 (letters) + ROT5 (digits), one explicit map."""
     text = _text(data)
     if not text:
         return
-    out = _rot_str(text, 13)  # ROT13 already rotates alpha; also rotate digits
-    out2 = "".join(chr((ord(c) - ord('0') + 5) % 10 + ord('0')) if c.isdigit() else c
-                   for c in out)
-    if out2 != text:
-        yield from _emit(ctx, out2.encode("utf-8", "replace"), "ROT18")
+    out = "".join(
+        chr((ord(c) - 97 + 13) % 26 + 97) if "a" <= c <= "z"
+        else chr((ord(c) - 65 + 13) % 26 + 65) if "A" <= c <= "Z"
+        else chr((ord(c) - 48 + 5) % 10 + 48) if "0" <= c <= "9"
+        else c
+        for c in text)
+    if out != text:
+        yield from _emit(ctx, out.encode("utf-8", "replace"), "ROT18")
 
 
 @solver("rot-n-brute", lambda fp: .20 if fp["charset"] == "ascii-text"
@@ -443,13 +446,22 @@ def solve_ebcdic(data, ctx):
 
 # ------------------------------------------- Baudot / ITA2 decode ----------
 # ITA2 letter shift table (index 0-31)
-_ITA2_LTRS = "\x00ETAOINSRHDLCUMWFYGPBVKQXJZ"
-_ITA2_FIGS = "\x00" + '3\n- \'87\r\x00\x004\x00,(90' + ":" + '?+\x00£.)/'
-_ITA2_LTRS = list("\x00ETAOINSRHDLCUMWFYGPBVKQXJZ\x00\x00\x00\x00")
-_ITA2_FIGS = list("\x00" + '3\n-\' 87\r\x004,!(\x000:9?+\x00£.)/')
-# Simplified ITA2 (30 chars each, padded to 32)
-_ITA2_L = list("_ETAOINSRHDLCUMWFYGPBVKQXJZ___")[:32]
-_ITA2_F = list("_3\n- '87\r_4_,(90:?+__.)/_____")[:32]
+# Genuine ITA2 (Baudot/Murray) code tables, indexed by the 5-bit code
+# (0..31). Code 27 is FIGS shift, 31 is LTRS shift, 8 is backspace. The
+# LTRS assignments (1=E, 2=LF, 3=A, 4=space, 5=S, ..., 25=B, 26=G,
+# 27=FIGS, 28=M, 29=X, 30=V, 31=LTRS) follow the standard order.
+_ITA2_L = [
+    "_", "E", "\n", "A", " ", "S", "I", "U",
+    "\r", "D", "R", "J", "N", "F", "C", "K",
+    "T", "Z", "L", "W", "H", "Y", "P", "Q",
+    "O", "B", "G", "_", "M", "X", "V", "_",
+]
+_ITA2_F = [
+    "_", "3", "\n", "-", " ", "'", "8", "7",
+    "\r", "$", ",", "!", ":", "(", ".", "0",
+    ")", "9", "?", "+", "/", "=", "%", "@",
+    "_", "2", "6", "_", ".", "/", ":", "_",
+]
 
 @solver("baudot-ita2", lambda fp: .30 if fp["charset"] == "ascii-text"
         and re.fullmatch(r'[01\s]+', fp.get("_text", "").strip() or "x")
@@ -1027,10 +1039,6 @@ def solve_columnar_brute(data, ctx):
                 return
             # Re-read by this column order
             grid = [padded[i:i+rows] for i in range(0, rows*cols, rows)]
-            out = "".join(grid[perm[row % cols]][row // cols]
-                          if row // cols < len(grid[perm[row % cols]]) else ''
-                          for row in range(n))
-            # Simpler: read row-by-row from rearranged columns
             rearranged = [grid[c] for c in perm]
             out = "".join("".join(rearranged[c][r] for c in range(cols)
                                    if r < len(rearranged[c]))
