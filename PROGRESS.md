@@ -548,3 +548,10 @@ a non-standard generator or malformed data. See LOGS S40.3.
   pruned as documented limitations; columnar test moved to a clean width.
 - Existing suites 39/40 green (only `test_medium_pack.py` fails on missing
   `Crypto` dependency). Version 0.10.2.
+## 0.10.3 — gap-filling staples batch 1
+- **PowerShell -EncodedCommand** decoded (base64 of UTF-16LE).
+- **Unicode tag stego** (U+E0000..E007F -> ASCII); fingerprint gains `_tags`.
+- **java.util.Random** seed recovery from consecutive nextInt() outputs, with LCG inversion and full-sequence verification.
+- **JWT RS256->HS256 key confusion** — asymmetric header verified with the public key as an HMAC secret.
+- **Zero-width delimiter scheme** (ZWJ-separated bits) added to the whitespace stego solver.
+- Still open from the reviewer list: hash length extension, CBC bit-flipping, GCM nonce reuse, IV=key AES, JS obfuscation, Shamir/Paillier/hidden-number, glibc rand/xorshift128+, classical ciphers, esolangs, PNG/GIF/APNG/pcap forensics, base100/base65536.

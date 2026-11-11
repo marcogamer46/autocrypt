@@ -891,6 +891,27 @@ def solve_whitespace_stego(data, ctx):
     text = _utf8(data)
     if not text:
         return
+    # Delimiter scheme first: zero-width space/non-joiner encode bits, and
+    # the zero-width joiner (‍) separates bytes. Common in "hidden in
+    # zero-width" challenge writer tools. Try that before the flat bitstream.
+    if '‍' in text:
+        byt, bytebits = bytearray(), ""
+        for ch in text:
+            if ch == '‍':
+                if bytebits:
+                    byt.append(int(bytebits, 2))
+                    bytebits = ""
+            elif ch == '​':
+                bytebits += '0'
+            elif ch == '‌':
+                bytebits += '1'
+        if bytebits:
+            byt.append(int(bytebits, 2))
+        if byt:
+            printable = sum(32 <= b < 127 for b in byt) / max(1, len(byt))
+            if printable >= 0.80:
+                yield from _emit(ctx, bytes(byt), "zero-width steganography (delimiter scheme)")
+                return
     # Zero-width binary encoding
     bits = ""
     for ch in text:

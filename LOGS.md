@@ -778,3 +778,13 @@ Linux installers so `autocrypt` is a global command, and add
     missing `Crypto` (PyCryptodome) dependency in the venv — environmental, not
     a regression.
   - Version bumped `0.10.1` → `0.10.2` (`autocrypt/_version.py`).
+
+## S41.01 — Gap-filling solvers batch 1 (v0.10.3)
+- New module `autocrypt/solvers_gaps.py` (registered in `solvers.py` import block) adds:
+  - `powershell-encodedcommand` — base64 of UTF-16LE (PowerShell -EncodedCommand) recovered as readable text.
+  - `unicode-tag-stego` — Unicode tag chars U+E0000..E007F mapped back to ASCII. `core.fingerprint` now exposes a `_tags` flag (ascii-only `_text` was dropping them).
+  - `java-random` — recovers a `java.util.Random` seed from consecutive `nextInt()` outputs (invert the 48-bit LCG; verify against all outputs).
+  - `jwt-key-confusion` — RS256::HS256 key confusion: an asymmetric-alg JWT whose signature verifies as HMAC-SHA256 keyed with the embedded PEM public key resolves to its payload.
+- Extended `solvers_mega.solve_whitespace_stego` with the zero-width **delimiter scheme** (ZWSP/ZWNJ bits split by ZWJ), tried before the flat bitstream.
+- Tests: `tests/test_gaps.py` (5 cases incl. a java-random negative control). Existing suites re-run: golden vectors 21/21, encoding variants 6/6.
+- Version bumped 0.10.2 → 0.10.3.

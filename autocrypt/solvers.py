@@ -3261,6 +3261,7 @@ def solve_rsa(data, ctx):
 # More encodings/ciphers and image/file steganography, kept in their own
 # modules; importing here registers them into the same REGISTRY.
 import autocrypt.solvers_extra  # noqa: E402,F401
+import autocrypt.solvers_gaps  # noqa: E402,F401
 import autocrypt.stego  # noqa: E402,F401
 import autocrypt.solvers_mega  # noqa: E402,F401
 import autocrypt.solvers_more  # noqa: E402,F401

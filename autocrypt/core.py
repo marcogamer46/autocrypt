@@ -474,7 +474,16 @@ def fingerprint(data: bytes) -> dict:
     filetype = detect_filetype(data)
     if filetype and filetype not in magic:
         magic.append(filetype)
+    # Unicode tag characters (U+E0000..E007F) carry hidden ascii; detectable
+    # only via a proper utf-8 decode (the ascii `text` above drops them).
+    _tags = False
+    try:
+        _u = data.decode("utf-8")
+        _tags = any(0xE0000 <= ord(_c) <= 0xE007F for _c in _u[:4000])
+    except Exception:
+        _tags = False
     return {
+        "_tags": _tags,
         "length": len(data), "entropy": _entropy(s), "charset": charset,
         "printable": printable, "ic": _ic(s), "classes": classes,
         "hypotheses": sorted(hypotheses.items(), key=lambda x: -x[1]),
