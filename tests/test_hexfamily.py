@@ -188,7 +188,8 @@ def main():
     print(f"HEXFAMILY seed={seed}: {passed}/{len(cases)}")
     for f in failed:
         print(f"  FAIL idx={f[0]} {f[1]:14} rank={f[2]} top={f[3]!r} {f[4]!r}")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

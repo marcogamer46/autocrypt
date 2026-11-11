@@ -81,7 +81,8 @@ def main():
         if wall >= 10:
             print(f"SLOW {name} wall={wall:.1f}s")
     print(f"XORFAMILY seed=20270703: {passed}/10")
+    return 1 if passed < 10 else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

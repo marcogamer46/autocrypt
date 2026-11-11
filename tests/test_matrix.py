@@ -58,6 +58,7 @@ mode="E" if "--english" in sys.argv else ("both" if "--both" in sys.argv else "F
 if mode=="E": cases={}
 if mode in("E","both"): cases.update(ecases)
 res={}
+bad=0
 for n,c in cases.items():
     if only and n not in only: continue
     open("tm.txt","w").write(c)
@@ -72,4 +73,7 @@ for n,c in cases.items():
     top=out[0] if out else None
     rank=next((i for i,x in enumerate(out) if target.lower() in x["plaintext"].lower()),None)
     status="OK  " if rank==0 else (f"#{rank+1}  " if rank is not None else "FAIL")
+    if rank is None:
+        bad += 1
     print(f"{status} {n:22} top={'FLAG ' if top and top['is_flag'] else ''}{(top['plaintext'][:40] if top else '-')!r}")
+sys.exit(1 if bad else 0)

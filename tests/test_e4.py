@@ -108,7 +108,8 @@ def main():
             if out:
                 print(f"     top={out[0]['chain'][:60]!r} {out[0]['plaintext'][:30]!r}")
     print(f"E4LABELFAMILY seed=20271105: {passed}/{len(cases)} (target: rank #1 and <8s)")
+    return 1 if passed < len(cases) else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

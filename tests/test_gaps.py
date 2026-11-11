@@ -144,7 +144,7 @@ def main():
     seed = 0xDEAD_BEEF
     ints = _rnd_ints(seed, 5)
     jtext = "Random outputs: " + ", ".join(str(i) for i in ints) + "."
-    failed |= not _case_marker("java-random", jtext, f"seed {seed}")
+    failed |= not _case_marker("java-random", jtext, f"internal state {seed}")
 
     # ---- JWT RS256->HS256 key confusion (wrapped multi-line PEM)
     der = b"FAKE-DER-KEY-MATERIAL-0123456789ABCDEF" * 4
@@ -159,9 +159,9 @@ def main():
     decoy = "The scores were 42, 7, 1337, 9001, 12345."
     failed |= not _case_marker("java-random-negative", decoy, "seed=", expect=False)
 
-    # ---- base100 (Hangul): base-11172 big integer as Hangul syllables
+    # ---- base100 (Hangul): base-100 big integer as Hangul syllables U+AC00..AC63
     flag5 = b"academy{gap_base100}"
-    hangul = _to_bigbase(flag5, 11172, 0xAC00)
+    hangul = _to_bigbase(flag5, 100, 0xAC00)
     failed |= not _case("base100", "payload: " + hangul + "\n", flag5)
 
     # ---- MD5 / SHA-1 hash-length-extension primitives (edge-case sweep)

@@ -92,7 +92,8 @@ def main():
             if out:
                 print(f"     top={out[0]['chain'][:60]!r} {out[0]['plaintext'][:36]!r}")
     print(f"AFFINEFAMILY seed=20270701: {passed}/10")
+    return 1 if passed < 10 else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -52,6 +52,7 @@ def run(*paths):
 
 def main():
     print(f"{'CASE':5} {'RES':6} {'RANK':4} {'FIRST':>6} {'WALL':>6}  CHAIN | TOP vs EXPECTED")
+    failed = 0
     for name, flag in CASES:
         py = E3 / f"{name}_challenge.py"
         out_txt = E3 / f"{name}_output.txt"
@@ -65,7 +66,12 @@ def main():
             top = o[0]
             chain = top.get("chain", "")
             top_txt = top.get("plaintext", "")
-            echo = chain.lower().startswith("as-is") or "source" in chain.lower()
+            # Echo = input returned unchanged. Real echo rows start with
+            # "as-is"; do NOT substring-match "source", because the hint
+            # method name "hint-keystream-xor" legitimately carries an
+            # argument "source=keystream ^ ct" in its chain string.
+            echo = chain.lower().startswith("as-is") or \
+                re.search(r"\bsource(?!=)", chain.lower()) is not None
             contains = flag.lower() in top_txt.lower()
             if top and not echo and contains:
                 return "PASS", 0, chain, top_txt
@@ -83,8 +89,12 @@ def main():
             if len(out2) > len(out):
                 status, rank, chain, top_txt = _score(out2)
         budget = " BUDGET" if wall > 35 else ""
+        if status != "PASS":
+            failed += 1
         print(f"{name:5} {status:6} {str(rank):>4} {str(fe if fe is not None else '-'):>6} {wall:6.1f}  {chain[:46]} | {top_txt[:30]!r} vs {flag!r}{budget}")
+    print(f"\nE3 strict: {len(CASES) - failed}/{len(CASES)} PASS")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
