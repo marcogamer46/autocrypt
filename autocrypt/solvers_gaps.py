@@ -164,12 +164,12 @@ def solve_java_random(data, ctx):
         st = _rnd_next(st)
         pred.append(st >> 16)
     signed = [p - (1 << 32) if p >= (1 << 31) else p for p in pred]
-    ctx.findings.append(f"java.util.Random seed recovered: {seed} "
-                        f"(matched {best[0]} outputs).")
-    note = (f"java.util.Random seed {seed} (0x{seed:x}); next outputs: "
+    ctx.findings.append(f"java.util.Random: recovered internal state (predecessor "
+                        f"of first output) {seed}; matched {best[0]} outputs.")
+    note = (f"java.util.Random internal state {seed} (0x{seed:x}); next outputs: "
             + ", ".join(str(x) for x in signed[len(u):]))
     yield from _emit(ctx, note.encode(), "java util.Random PRNG recovery",
-                     {"seed": seed, "matched": best[0]}, score=.3)
+                     {"state": seed, "matched": best[0]}, score=.3)
 
 
 # ------------------------------------------------------- JWT RS256->HS256 confusion
@@ -183,7 +183,8 @@ def _b64url_decode(s):
 
 
 @solver("jwt-key-confusion", lambda fp: .60
-        if bool(fp.get("prior_map", {}).get("jwt")) and bool(fp.get("prior_map", {}).get("pem")) else 0.0)
+        if bool(fp.get("_text")) and _JWT_RE.search(fp["_text"].encode("utf-8", "replace"))
+        and _PEM_RE.search(fp["_text"].encode("utf-8", "replace")) else 0.0)
 def solve_jwt_key_confusion(data, ctx):
     """Forge/verify a JWT whose alg is asymmetric but whose signature is an
     HMAC keyed with the RSA public key (RS256->HS256 confusion)."""
@@ -207,7 +208,7 @@ def solve_jwt_key_confusion(data, ctx):
             m = re.search(rb'"alg"\s*:\s*"([A-Za-z0-9_]+)"', head)
             if m:
                 alg = m.group(1).decode()
-            if not alg or alg == "none" or alg.startswith("HS"):
+            if not alg or alg == "none":
                 continue
             payload = _b64url_decode(parts[1])
             sig = _b64url_decode(parts[2])
@@ -231,9 +232,11 @@ def solve_jwt_key_confusion(data, ctx):
 def _bigbase_decode(text, base, lo, hi):
     """Decode a big-integer expressed in `base` where each digit maps to the
     code point ``lo + digit``. Digits are read most-significant first (the
-    common base100/base65536 writer order); the reverse order is tried too."""
+    common base100/base65536 writer order); the reverse order is tried too.
+    Only characters in [lo, hi] are digits; anything outside the alphabet is
+    ignored, so a stray out-of-range symbol cannot inject a garbage digit."""
     digits = [ord(ch) - lo for ch in text if lo <= ord(ch) <= hi]
-    if len(digits) < 4:
+    if not digits:
         return None
     for rev in (False, True):
         ds = digits[::-1] if rev else digits
@@ -243,8 +246,12 @@ def _bigbase_decode(text, base, lo, hi):
         if n <= 0:
             continue
         raw = n.to_bytes((n.bit_length() + 7) // 8, "big")
-        cut = raw.find(b"\x00")
-        txt = raw[:cut] if 4 < cut < len(raw) else raw
+        # Minimal-length big-endian encoding never has leading zero bytes.
+        # Strip any (defensive) leading zeros but DO NOT search for an
+        # interior NUL — a payload legitimately containing 0x00 must decode
+        # in full, not be truncated at the first zero byte.
+        raw = raw.lstrip(b"\x00")
+        txt = raw
         if not txt:
             continue
         score, _ = assess(txt)
@@ -256,15 +263,15 @@ def _bigbase_decode(text, base, lo, hi):
 
 @solver("base100-decode", lambda fp: .45 if fp.get("_han") else 0.0)
 def solve_base100(data, ctx):
-    """base100 (qntm-style): a big integer in base 11172 written as Hangul
-    syllables U+AC00..D7A3."""
+    """base100 (qntm-style): a big integer in base 100 written as Hangul
+    syllables U+AC00..U+AC63 (the 100-symbol base100 subset)."""
     text = data.decode("utf-8", "replace")
-    r = _bigbase_decode(text, 11172, 0xAC00, 0xD7A3)
+    r = _bigbase_decode(text, 100, 0xAC00, 0xAC63)
     if r is None:
         return
     txt, score, rev = r
-    ctx.findings.append(f"Decoded {len([c for c in text if 0xAC00 <= ord(c) <= 0xD7A3])} "
-                        "Hangul syllables as a base-11172 integer.")
+    ctx.findings.append(f"Decoded {len([c for c in text if 0xAC00 <= ord(c) <= 0xAC63])} "
+                        "Hangul syllables as a base-100 integer.")
     yield from _emit(ctx, txt, "base100 (Hangul) decode", {"rev": rev},
                      score=max(score, 0.35))
 
@@ -324,6 +331,11 @@ def _bf_run(code, max_steps=400_000):
             if tape[p] != 0:
                 i = jumps[i]
         i += 1
+    if i < n:
+        # Step budget exhausted before the program reached its end: the
+        # output buffer is truncated, so report this run as a failure rather
+        # than emitting an incomplete (and possibly misleading) result.
+        return None
     return bytes(out)
 
 
@@ -348,7 +360,7 @@ def _ook_to_bf(text):
             j += 1
         if not punct:
             return None
-        toks.append(punct[0])
+        toks.extend(punct)
         pos = j
     if len(toks) < 12 or len(toks) % 2 != 0:
         return None
