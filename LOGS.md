@@ -803,3 +803,65 @@ Linux installers so `autocrypt` is a global command, and add
 - Tests: `tests/test_gaps.py` now 14 checks (brainfuck, ook, mt19937-clone, mt19937 negative control, plus the earlier 10). Auxiliary standalone verification: bf/ook round-trips; MT clone matches `random.Random` streams at two seeds; negative control returns None.
 - Regression: golden vectors 21/21, encoding variants 6/6 unchanged.
 - Version bumped 0.10.4 -> 0.10.5.
+## S44.01 — Audit bug-fix pass (v0.10.6)
+- Applied the ~34-item audited bug list as surgical root-cause fixes (see
+  PROGRESS.md 0.10.6 for the full per-bug mapping). No new dependencies; no flag
+  hardcoding in solvers; `@solver` registry, `_emit` convention and best-first
+  search preserved.
+- Harness exit-code verification: `test_e3`, `test_e4`, `test_hexfamily`,
+  `test_affinefamily`, `test_xorfamily`, `test_matrix` all return non-zero when a
+  case fails (verified by breaking a case, confirming non-zero exit, restoring).
+- New `tests/test_regressions.py` (9 checks) all PASS. All touched files
+  `py_compile` clean.
+- Version bumped 0.10.5 -> 0.10.6.
+- Verification caught one self-inflicted regression from this batch (audit #9
+  base64/base32 reorder) — reverted; `test_hexfamily.py` back to 10/10.
+  Tightened `test_e3.py` echo heuristic (pre-existing false-positive on c14);
+  e3 now 15/15. `test_xorfamily.py` xor5_w2 remains a documented pre-existing
+  solver gap (not part of the audit list). All touched files `py_compile` clean.
+
+## S45.01 — Audit bug-fix batch 2 (#36-48) (v0.10.7)
+- Applied the 13 new bugs from the 49-item audited list (#36-48), plus re-applied
+  #4, as surgical root-cause fixes. Full per-bug mapping in PROGRESS.md 0.10.7.
+- **base100 (#36/#39/#43)**: `_bigbase_decode` now strips only leading zeros
+  (interior NUL payloads decode fully) and accepts >=1 digit; `solve_base100`
+  radix corrected to 100 over U+AC00..AC63 (real qntm subset). `test_gaps.py`
+  base100 premise updated; regression `36-base100-interior-nul` and
+  `39-base100-radix` added.
+- **Ook (#37)**: `_ook_to_bf` keeps every punctuation character of a token
+  (`toks.extend(punct)`), fixing mis-pairing when a token carried two marks.
+  Regression `37-ook-double-punct`.
+- **Brainfuck (#40)**: `_bf_run` returns None when the step budget ends before
+  the program end, so truncated output is never emitted. Regression
+  `40-bf-budget-truncated`.
+- **JWT (#38/#44)**: HS256-header tokens are no longer skipped (they are the
+  confusion case) and the prior now requires an actual token + PEM in the text.
+  Regression `38-jwt-hs256`.
+- **java.random (#45)**: finding/note renamed to "internal state (predecessor
+  of first output)"; `test_gaps.py` marker updated.
+- **Registry (#41/#47)**: `solver()` dedups (newest wins); `solvers_gaps`
+  imports moved after `solvers_extra`/`solvers_more` so its bf/ook win; the
+  unused `_cjk` fingerprint field was removed. Regressions
+  `41-registry-dedup` and `41-registry-gaps-wins`.
+- **EC parsing (#4)**: `_ec_parse_ints` mirrors `_dlp_parse_ints` (probabilityx /
+  hex-letters / decimal). Regression `4-ec-decimal` covers the decimal path.
+- **challenge.py (#46/#48)**: "A" label regex drops `(?i)`; dead `val`
+  assignments removed.
+- **Harness (#42)**: `run_tests.sh` treats rc=124 (timeout hang) as an error;
+  verified by simulating both old and new guard (124: old=pass, new=fail).
+- Tests: `tests/test_regressions.py` now 21 checks, all PASS. `test_gaps.py`
+  12/12 PASS. `test_e3.py` 15/15 PASS standalone. All touched files
+  `py_compile` clean.
+- Full-suite note: each module passes individually; whole-suite back-to-back
+  runs show occasional BUDGET flakes on near-timeout cases (e3 c12, blind2,
+  xorfamily variants) under CPU load — pre-existing, not from this batch.
+- Version bumped 0.10.6 -> 0.10.7.
+- Addendum (#42): the `dlp_neg` negative control genuinely takes ~55s to
+  complete correctly (rc=0, no fake flag) but was killed at the old 25s outer
+  timeout → rc=124. #42's new guard correctly flagged it as an error (real
+  harness observation). NEG/NEG2 outer timeouts raised to 70s so the slow but
+  valid negative passes, while real hangs (>70s) still fail as rc=124.
+- Addendum: `even_e` needs a scheduler timeout to fire (verified pre-existing at
+  HEAD via stash, and reproducible: works with `--timeout 25`, silent
+  "No weakness found" without it). `run_tests.sh` even_e case now passes
+  `--timeout 25`.

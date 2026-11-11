@@ -565,3 +565,119 @@ a non-standard generator or malformed data. See LOGS S40.3.
 - **Brainfuck / Ook! interpreters** added (esolang solvers), gated on tight prior heuristics.
 - **MT19937 (Python random) clone** — untemper via rigorous 32x32 GF(2) matrix inverse of the CPython tempering; predicts the next 8 outputs from 624 observed values (verified against real `random.Random` streams; negative control fires nothing).
 - `tests/test_gaps.py` extended to 14 checks; golden vectors 21/21 and encoding variants 6/6 stay green.
+## 0.10.6 — audit bug-fix pass (#1-#34)
+- **scoring._leet_word_variants** (#1): expansion now bounded — if >12 ambiguous leet
+  positions, keep only the literal first variant (was factorial blowup).
+- **challenge.analyze_source** (#2): SyntaxError branch returned the full 7-tuple
+  (missing `byte_hints`); hex-token fallback scan strips `0x` prefixes first (#11).
+- **czroots._roots_mod_prime** (#3): squarefree step uses `poly_divmod` quotient,
+  not remainder.
+- **solvers._ec_parse_ints** (#4): bare decimals parsed as base-10 (were base-16).
+- **solvers** (#15): flag-body wordlist filter to ASCII alpha words; hash-crack
+  (#16) keeps original ciphertext bytes for bcrypt and lowercases only the ASCII
+  digest; linear-recurrence verified-fallback guarded (#17); autokey crib range
+  bounded (#27); `_g2_offset_of` add/sub sign fix (#28).
+- **core.py** (#8): solver-worker per-candidate try/except so one bad emit can't
+  kill the whole search. (#9): `_free_fixpoint` now prefers base64 over base32.
+- **solvers_mega.py**: ROT18 explicit 13-letter/5-digit map (#18); genuine 32-entry
+  ITA2 LTRS/FIGS tables (#19); columnar brute dead first computation removed (#29).
+- **solvers_pack7.py**: LCG recover window bounded (#20); Franklin-Reiter early
+  reject `b==0` (#21).
+- **solvers_pack6.py**: Enigma rotors pad to exactly three, duplicating the sole
+  spec rotor (#22); SCD decrypt shape guard (#30); subset-sum MITM honors ctx expiry
+  (#31).
+- **updater.py**: cfg-repo check via `(repo/".git").exists()` (#12); pip-spec
+  password redaction (#13); missing-remote-ref guard (#23).
+- **stego.py**: WAV data chunk now requires bps/channels known (#14).
+- **watcher.py**: wake_up handles `subprocess.TimeoutExpired` (#24).
+- **lattice.py**: Coppersmith per-vector `D` reset (#25).
+- **solvers_extra.py**: base45 strips trailing CRLF (#26).
+- New `tests/test_regressions.py` covering #1,2,3,4,18,19,20,21,22; test_matrix /
+  e3 / e4 / hexfamily / affinefamily / xorfamily harness exits hardened to non-zero
+  on failure (verified by break + restore).
+- Version bumped 0.10.5 -> 0.10.6.
+- **Post-fix verification note**: full-standalone-suite run surfaced 3 failures.
+  Two were pre-existing and unrelated to the audit batch (confirmed via `git
+  stash` baseline on HEAD): `test_xorfamily.py` xor5_w2 (base64-wrapped
+  repeating-key XOR, key len 5 — solver ranks a wrong candidate above the true
+  flag; left documented as a known pre-existing gap) and `test_e3.py` c14 (a
+  harness false-positive: the `echo` heuristic substring-matched "source" inside
+  the hint method chain `hint-keystream-xor(source=keystream ^ ct)`). One was a
+  genuine regression from THIS batch: audit fix #9 (base64-before-base32
+  reorder in `core._free_fixpoint`) broke `test_hexfamily.py` vigenere_L4, and
+  was reverted — base32 is the stricter alphabet and must win; base64-first
+  mis-decoded uppercase base32 blobs. `test_e3.py` echo heuristic tightened to
+  `\bsource(?!=)` so a method-argument "source=" no longer counts as echo.
+
+## S45.01 — Audit bug-fix batch 2 (#36-48) (v0.10.7)
+
+Applied the 13 new bugs from the 49-item audited list (#36-48) plus re-applied
+#4; all surgical, root-cause fixes. No new dependencies; no flag hardcoding;
+`@solver` registry, `_emit` convention, deterministic budgets and best-first
+search preserved.
+
+Fixes:
+- `solvers_gaps.py`:
+  - #36: `_bigbase_decode` no longer truncates at an interior NUL byte — it
+    strips only defensive leading zeros (`raw.lstrip(b"\x00")`) instead of
+    searching for the first `\x00` and slicing there; a payload legitimately
+    containing 0x00 now decodes in full.
+  - #43: minimum digit count lowered from 4 to "at least one" (`if not digits`).
+  - #39: `solve_base100` radix corrected 11172 -> 100 over U+AC00..U+AC63
+    (the real qntm base100 subset); out-of-range symbols are ignored.
+  - #37: `_ook_to_bf` extends ALL punctuation chars of a token into the token
+    stream (`toks.extend(punct)`), instead of keeping only `punct[0]` and
+    dropping the rest (which mis-paired subsequent tokens).
+  - #40: `_bf_run` returns None when the step budget is exhausted before the
+    program reaches its end, so a truncated output buffer is never emitted as a
+    plausible result.
+  - #38: `solve_jwt_key_confusion` no longer skips tokens whose header alg
+    starts with "HS" — the RS256->HS256 confusion is exactly the case where the
+    rewritten header says HS256, so those tokens must be verified, not skipped.
+  - #44: JWT prior tightened from a prior_map heuristic to requiring an actual
+    JWT token and a PEM public key in the fingerprint text.
+  - #45: java.util.Random finding/note renamed to "recovered internal state
+    (predecessor of first output)" instead of calling it the seed.
+- `core.py`: #41 `solver()` registry dedups (newest registration wins);
+  #47 removed the unused `_cjk` fingerprint field.
+- `solvers.py`: #41 import reorder puts `solvers_gaps` after
+  `solvers_extra`/`solvers_more` so the gaps Brainfuck/Ook implementations
+  register last and win; #4 `_ec_parse_ints` mirrors `_dlp_parse_ints`
+  (0x prefix, hex-letters, else decimal).
+- `challenge.py`: #46 the "A" label regex drops `(?i)` so it does not match
+  e.g. "a" in unrelated contexts; #48 removed dead `val = int(raw, 16)` lines.
+- `run_tests.sh`: #42 both negative harness checks treat rc=124 (timeout
+  hang) as an error/failure instead of allowing it to pass.
+
+Skipped with recorded reason:
+- #9 (base64-before-base32 reorder in `_free_fixpoint`): verified regression —
+  genuine base32 layering is common and base32 is the stricter alphabet, so
+  strictest-match (base32 first) is correct for this codebase; the reorder
+  broke `test_hexfamily.py` vigenere_L4 and was reverted.
+
+Verification:
+- `python -m py_compile` clean over every touched file.
+- `tests/test_regressions.py` extended to 21 checks (#36-41 added), 21/21 PASS.
+- `tests/test_gaps.py` base100 premise (radix 100) and java-random marker
+  updated; 12/12 PASS.
+- `tests/test_e3.py` 15/15 PASS standalone.
+- #4 spot-check: decimal / 0x / hex-letters values all parse correctly.
+- #42 verified by simulation of the new guard: rc=124 previously classified as
+  a pass, now as an error (suite exits non-zero).
+- Full-suite note: every `tests/test_*.py` passes individually. Back-to-back
+  runs of the WHOLE standalone suite occasionally show one near-timeout case
+  (e3 c12, blind2, xorfamily variants) exceeding its wall-clock budget under
+  sustained CPU load (BUDGET flags, e.g. e3 c12 is ~29s standalone). These all
+  pass when run individually and are pre-existing resource-contention flakes,
+  not regressions from this batch.
+- Version bumped 0.10.6 -> 0.10.7.
+- Addendum: the `dlp_neg` negative control is a 1024-bit decoy that completes
+  correctly (~55s, rc=0, no fake flag) but exceeded the harness's old 25s
+  outer timeout, so it was being killed at rc=124. #42 correctly surfaced this
+  (rc=124 now = error). The NEG/NEG2 outer timeouts were raised to 70s so the
+  slow-but-successful negative finishes with rc=0, while a true hang beyond
+  that still fails as rc=124.
+- Addendum: `even_e` (RSA even-e roots) did not fire under the harness's
+  no-timeout invocation — confirmed pre-existing at HEAD (same result with the
+  working tree stashed). The solver solves it given a scheduler deadline, so
+  the `run_tests.sh` case now passes `--timeout 25` explicitly.
