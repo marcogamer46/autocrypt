@@ -23,6 +23,9 @@ chronological session record.
   are never misread as blocks.
 - Unlabeled numeric fallback no longer misreads a labeled `n,c,d` triple as
   `n,e,c`; tiny-modulus guard relaxed (n < 32) so genuine tiny-RSA passes.
+- Block-RSA detection excludes `p1..pN`/`q1..qN` source-hint primes (as well as
+  `p/q/d`), so multi-prime challenges (e.g. `test_e4`) are never misread as a
+  list of ciphertext blocks.
 - Tests: `tests/test_rsa_ui_phase7.py` expanded to 14 checks (d-only, p/q
   path, multiline/uppercase parse, hex autodetect, missing-required, wrong-d
   safety, block-RSA, plaintext == pow(c,d,n)).

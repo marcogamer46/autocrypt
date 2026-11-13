@@ -925,3 +925,7 @@ Linux installers so `autocrypt` is a global command, and add
     n,e,c; tiny-modulus guard relaxed to n<32.
   - Tests expanded to 14 checks in `test_rsa_ui_phase7.py`; full suite green.
 - Version bumped 0.11.4 -> 0.11.5.
+- Full suite caught a regression in the block-RSA detector: source-hint primes
+  (`p1..pN`/`q1..qN`) were misread as ciphertext blocks, making `test_e4`
+  (multi-prime) time out (5/10 → after excluding `p\d+/q\d+` values from block
+  detection, back to 10/10). Full suite 50/50. Committed as follow-up.

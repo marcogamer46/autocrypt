@@ -3349,10 +3349,14 @@ def solve_rsa(data, ctx):
             except Exception:
                 _nums = []
             # Reserve the known parameter values so they are never misread as
-            # ciphertext blocks (e.g. when p/q/d are supplied alongside n/e).
+            # ciphertext blocks (e.g. when p/q/d are supplied alongside n/e, or
+            # when source hints provide p1..pN / q1..qN primes).
             _reserved = {v for v in (n, e, vals.get("c"), vals.get("p"),
                                      vals.get("q"), vals.get("d"))
                          if isinstance(v, int)}
+            for _k, _v in vals.items():
+                if re.fullmatch(r"(?:p|q)\d+", _k) and isinstance(_v, int):
+                    _reserved.add(_v)
             _blocks = [x for x in _nums if x not in _reserved]
             if len(_blocks) >= 3 and all(0 < x < n for x in _blocks):
                 _d_b = vals.get("d")

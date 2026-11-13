@@ -1019,5 +1019,6 @@ Decisions:
   label formats.
 
 Verification: `test_rsa_ui_phase7.py` (14 checks) pass; CYBERCONNECT block-RSA
-solved; full suite clean.
+solved; full suite 50/50 (after excluding `p1..pN`/`q1..qN` source-hint primes
+from block detection, which had caused `test_e4` multi-prime timeouts).
 gzip/zlib/bzip2 decompression sanity-checked. Next: Phase 7 (RSA UI mode).
