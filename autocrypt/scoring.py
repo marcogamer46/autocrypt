@@ -372,13 +372,20 @@ def assess(data: bytes | str) -> tuple[float, str]:
         wordscore = min(1.0, word_ratio / (.65 if n < 60 else .38))
     else:
         qscore = chiscore = wordscore = 0.0
+    if n >= 2:
+        ioc = sum(c * (c - 1) for c in collections.Counter(letters).values()) / (n * (n - 1))
+        ioc_score = 1.0 - min(1.0, abs(ioc - 0.066) / 0.066)
+    else:
+        ioc_score = 0.0
     if n < 60:
         # Short samples overfit quadgrams and frequency tables. Weight actual
         # word evidence more heavily until there is enough text to stabilize
-        # the statistical features.
-        value = .10 * qscore + .35 * chiscore + .49 * wordscore + .06 * printable
+        # the statistical features. (Phase 2: IoC joins the mix.)
+        value = (.08 * qscore + .30 * chiscore + .12 * ioc_score
+                 + .44 * wordscore + .06 * printable)
     else:
-        value = .66 * qscore + .18 * chiscore + .10 * wordscore + .06 * printable
+        value = (.58 * qscore + .16 * chiscore + .10 * ioc_score
+                 + .10 * wordscore + .06 * printable)
     value = max(0.0, min(1.0, value))
     if partial:
         value = min(value, .60)
@@ -483,3 +490,95 @@ def plain_text_score(buf: bytes, flag_bonus: bool = False) -> float:
     q = _quadgram_from_letters(letters) if len(letters) >= 4 else -6.0
     bonus = .6 if flag_bonus and _FLAGISH.search(text) else 0.0
     return total / len(buf) + .5 * (q + 5.5) + bonus
+
+
+# --------------------------------------------------------- Phase 2: unified
+def index_of_coincidence(text: bytes | str) -> float:
+    """Friedman's index of coincidence over letters (0..1).
+
+    English ≈ 0.066; uniform random letters ≈ 0.038; a single repeated letter
+    → 1.0. Short/digit-only text returns 0.0 (vomit reliable).
+    """
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", "replace")
+    letters = _letters(text)
+    n = len(letters)
+    if n < 2:
+        return 0.0
+    counts = collections.Counter(letters)
+    return sum(c * (c - 1) for c in counts.values()) / (n * (n - 1))
+
+
+def score(text: bytes | str, *, flag_regex=None,
+          flag_format: str = r"\w{1,40}\{.*?\}") -> float:
+    """Unified 0..1 plaintext-likeness (Phase 2).
+
+    One formula combining the four independent evidence channels named in the
+    roadmap:
+
+      * letter-frequency chi-square (how English the letter distribution is),
+      * index of coincidence proximity to English (~0.066),
+      * printable-character ratio (rejects decoded binary/symbol soup),
+      * dictionary-word density (real words, not just letter-frequency shape).
+
+    A *large, additive* bonus fires when the text matches a flag shape
+    (``flag{...}``, ``CTF{...}``, or a user-supplied ``flag_regex``). The
+    bonus is intentionally big — a genuine flag must outrank longer, cleaner
+    prose — but it only ever *adds* to the base, never rescues pure garbage.
+
+    ``flag_regex`` may be a compiled pattern or a string; an invalid regex is
+    treated as "no match" rather than raising.
+    """
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", "replace")
+    if not text.strip():
+        return 0.0
+    printable = sum(c.isprintable() or c in "\r\n\t" for c in text) / max(1, len(text))
+
+    letters = _letters(text)
+    n = len(letters)
+    if n >= 2:
+        counts = collections.Counter(letters)
+        chi = sum((counts[c] - n * _LETTER_FREQ[c]) ** 2 / (n * _LETTER_FREQ[c])
+                  for c in _LETTER_FREQ)
+        chiscore = math.exp(-2.0 * chi / n)
+        ioc = sum(c * (c - 1) for c in counts.values()) / (n * (n - 1))
+        ioc_score = 1.0 - min(1.0, abs(ioc - 0.066) / 0.066)
+        wordscore = min(1.0, dictionary_fraction(text))
+    else:
+        chiscore = ioc_score = wordscore = 0.0
+
+    # Blend the Phase-2 channels. ``english_confidence`` (quadgram + dictionary)
+    # is the sharpest single discriminator (0.93 English vs 0.02 random), so it
+    # leads; chi-square and IoC confirm the letter distribution; printable ratio
+    # rejects decoded binary/symbol soup. Weights sum to 1.0.
+    base = (0.40 * english_confidence(text)
+            + 0.20 * chiscore
+            + 0.15 * ioc_score
+            + 0.05 * wordscore
+            + 0.20 * printable)
+
+    # Flag bonus: an explicit user-supplied ``flag_regex`` is authoritative —
+    # a match gets the large flat bonus (the user asserted this shape). The
+    # generic/default flag shape is *heuristic*, so its bonus is scaled by how
+    # flag-like the matched body actually is (dictionary/leet evidence); a
+    # random-letter body that merely wears ``flag{...}`` syntax earns almost
+    # nothing, while a genuine flag body earns the full large bonus.
+    flag_bonus = 0.0
+    if flag_regex is not None:
+        try:
+            pattern = flag_regex if hasattr(flag_regex, "search") else re.compile(flag_regex, re.DOTALL)
+            if pattern.search(text):
+                flag_bonus = 0.5
+        except re.error:
+            flag_bonus = 0.0
+    else:
+        rx = flag_format or r"\w{1,40}\{.*?\}"
+        try:
+            pattern = rx if hasattr(rx, "search") else re.compile(rx, re.DOTALL)
+            if pattern.search(text):
+                plaus = max(flag_plausibility(text), leet_body_dict_fraction(text))
+                flag_bonus = 0.45 * plaus
+        except re.error:
+            flag_bonus = 0.0
+    return min(1.0, base + flag_bonus)

@@ -775,3 +775,46 @@ Addendum (Phase 1 hardening, after adversarial review):
   regex (valid but catastrophic-backtracking); an invalid regex is caught, but
   a slow-but-compiling one is not bounded. Both are adversarial/log-trust edge
   cases, not reachable from operationally-written logs.
+
+## Phase 2 — unified scoring (v0.11.0)
+
+Goal: one `score(text)` combining letter-frequency chi-square, index of
+coincidence, printable ratio, dictionary density, and a large flag bonus
+(flag{...}/CTF{...}/user regex).
+
+Done:
+- `autocrypt/scoring.py`:
+  - New `index_of_coincidence(text)` (Friedman IoC over letters; English ≈
+    0.066, random ≈ 0.038, identical → 1.0; short/non-letter → 0.0).
+  - New public `score(text, *, flag_regex=None, flag_format=...)` → 0..1.
+    Channels weighted to sum 1.0: english_confidence .40, letter chi-square
+    .20, IoC-proximity .15, dictionary fraction .05, printable ratio .20.
+    Flag bonus: an explicit `flag_regex` is authoritative (flat +0.5 on
+    match); the default generic shape is heuristic and quality-scaled (up to
+    +0.45 × body plausibility), so a random-letter `flag{...}` shell earns
+    almost nothing while a genuine flag body reaches the top of the range.
+  - `assess()` now includes the IoC term (weights adjusted; short:
+    .08 q + .30 chi + .12 ioc + .44 word + .06 printable; long:
+    .58/.16/.10/.10/.06) so the whole search pipeline benefits from the new
+    signal.
+- Tests: `tests/test_scoring.py` (11 checks): good-English-high, garbage-low,
+  good-beats-garbage, IoC axis, default-flag bonus, user-regex bonus (≥
+  default, >0.85), additive-not-rescue (default heuristic) vs authoritative
+  (explicit regex), bytes input, empty/noise, invalid-regex degrades,
+  assess-still-sane.
+
+Decisions:
+- The flag bonus is *additive*: it adds to the language base, never rescues
+  pure garbage. Explicit user regex is authoritative (flat +0.5); the default
+  shape is scored by body plausibility so random-letter `flag{...}` shells
+  don't float.
+- `english_confidence` leads the blend because raw chi-square is harsh on real
+  prose (real English scores ~0.39 on it under add-0.2 smoothing). A pure
+  chi-weighted formula underrates clean English; the quadgram+dictionary
+  channel is the sharpest single discriminator (0.93 vs 0.02).
+
+Verification: full suite 45/45 (incl. `test_scoring.py`). `--replay` on a
+seeded 2-record log: 1 PASS, 1 FAIL, 0 unusable (rc=0) — the replay path
+survives the scoring changes.
+
+Known issues: none known. Next: Phase 3 (layered beam search).

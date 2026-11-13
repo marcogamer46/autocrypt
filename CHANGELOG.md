@@ -4,6 +4,19 @@ All notable changes to AutoCrypt are recorded here. Format: version → notable
 changes. See `PROGRESS.md` for detailed work logs and `LOGS.md` for the
 chronological session record.
 
+## 0.11.0 (unreleased) — Phase 2: unified scoring
+
+- New `autocrypt.scoring.score()`: one 0..1 plaintext-likeness score blending
+  English confidence (quadgram + dictionary), letter-frequency chi-square,
+  index of coincidence, dictionary density, and printable ratio — plus a large
+  flag bonus. The bonus is quality-scaled for the default `flag{...}` shape
+  (up to +0.45 × body plausibility, so random-letter flag shells don't float)
+  and flat +0.5 for an explicit user-supplied `flag_regex` (authoritative).
+- New `autocrypt.scoring.index_of_coincidence()` (Friedman IoC).
+- `assess()` (used by the whole search pipeline) now includes the index-of-
+  coincidence term, improving English-vs-scrambled discrimination.
+- Tests: `tests/test_scoring.py`.
+
 ## 0.10.9 (unreleased) — Phase 1: failure log + replay
 
 - **Failure log**: when an input cannot be decoded, the CLI appends one JSON
