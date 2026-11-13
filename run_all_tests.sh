@@ -4,6 +4,8 @@
 cd "$(dirname "$0")"
 PY=".venv/Scripts/python.exe"
 [ -f "$PY" ] || PY=python3
+# Tests must not append to the default failures.jsonl in the repo root.
+export AUTOCRYPT_NO_FAILURES_LOG=1
 PASS=0; FAIL=0; ERR=0
 : > tests_results.log
 for f in tests/test_*.py; do

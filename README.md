@@ -249,6 +249,8 @@ parsing — challenge `.py` files are never executed, only read.
 | `--params PARAMS` | RSA parameters, e.g. `n=...,e=...,c=...` |
 | `--fast` | ~half the time: shorter per-solver slices, skip the slowest brute-force solvers |
 | `--deep` | 2× per-solver time + deeper layered decode search (max depth 6→9) |
+| `--failures PATH` | append undecoded inputs as JSONL to PATH (default `failures.jsonl`); also read by `--replay` |
+| `--replay` | rerun every logged failure and report which now decode |
 | `--no-color` | disable ANSI colors |
 | `--update` / `-update` | self-update (see above) |
 
@@ -258,7 +260,15 @@ Examples:
 autocrypt message.txt
 autocrypt --json --top 5 --explain challenge.py output.txt
 autocrypt --timeout 60 --deep stubborn_input.txt
+autocrypt --failures /tmp/failures.jsonl mystery.bin
+autocrypt --replay --failures /tmp/failures.jsonl   # which failures now decode?
 ```
+
+When an input cannot be decoded, autocrypt appends one JSON line to
+`failures.jsonl` (or the `--failures` path): raw input (base64), timestamp,
+decoders tried, and best score reached. `--replay` reruns every logged failure
+and reports which ones now pass — handy after adding new solvers.
+
 
 ## Real CTF challenges (`.py` + `output.txt`)
 

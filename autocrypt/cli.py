@@ -14,6 +14,8 @@ from pathlib import Path
 from autocrypt.core import Context, fingerprint, search
 from autocrypt.scoring import assess
 from autocrypt._version import __version__ as _version
+from autocrypt.failures import DEFAULT_FILE, build_record, record_failure
+from autocrypt.failures import iter_failures as _iter_failures
 import autocrypt.solvers  # register built-ins
 
 
@@ -50,7 +52,8 @@ def _load_wordlist(path):
 def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=200,
                known_plaintext="", wordlist_path="", params="", jobs=None,
                progress_callback=None, flag_format_explicit=False, verbose=False,
-               strict=False, fast=False, deep=False, max_depth=6):
+               strict=False, fast=False, deep=False, max_depth=6,
+               failure_log_path=None):
     """Run the existing fingerprint/search pipeline for both CLI and UI."""
     wordlist = _load_wordlist(wordlist_path)
     fp = fingerprint(data)
@@ -135,6 +138,14 @@ def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=200,
             return False
         return r["confidence"] < .6
     kept = [r for r in res if not _junk(r)]
+    _prefilter = list(res)
+    best_score = max((float(r.get("confidence", 0.0)) for r in _prefilter),
+                     default=0.0)
+    top_candidate = None
+    if _prefilter:
+        _best_row = max(_prefilter, key=lambda r: float(r.get("confidence", 0.0)))
+        top_candidate = {"chain": _best_row["chain"],
+                         "confidence": round(float(_best_row.get("confidence", 0.0)), 4)}
     if len(kept) != len(res):
         # Preserve TIMEOUT / SOLVER_FAILED signals rather than erasing them
         # when junk-filtering empties the results (previously everything was
@@ -143,6 +154,24 @@ def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=200,
         new_status = res.status if kept else (
             res.status if res.status in ("TIMEOUT", "SOLVER_FAILED") else "NOT_FOUND")
         res = type(res)(kept, new_status, res.failures)
+    ctx.decoded = bool(kept)
+    # Phase 1 failure log: when an input could not be decoded, append one JSONL
+    # record (input, timestamp, decoders tried, best score) so --replay can
+    # rerun it later. Skipped for empty input and under the test harness
+    # (AUTOCRYPT_NO_FAILURES_LOG=1) so suites don't pollute the repo.
+    if failure_log_path and not ctx.decoded and data \
+            and os.environ.get("AUTOCRYPT_NO_FAILURES_LOG") != "1":
+        try:
+            rec = build_record(data, ctx, res.status, best_score, top_candidate, {
+                "flag_format": flag_format, "timeout": timeout,
+                "max_depth": max_depth, "params": params, "jobs": jobs,
+                "charset": fp.get("charset", ""),
+                "known_plaintext": known_plaintext,
+                "wordlist_path": wordlist_path,
+                "fast": fast, "deep": deep, "strict": strict})
+            record_failure(failure_log_path, rec)
+        except OSError:
+            pass
     if verbose:
         for r in res:
             print(f"[verbose] kept: {r['chain']} (confidence {r['confidence']}, "
@@ -177,6 +206,10 @@ def build_parser():
                    help="cut time in half: shorter per-solver slices, skip the slowest brute-force solvers")
     p.add_argument("--deep", action="store_true",
                    help="2x per-solver time and deeper search (for stubborn challenges)")
+    p.add_argument("--failures", metavar="PATH",
+                   help="JSONL log of undecoded inputs (default: failures.jsonl); also read by --replay")
+    p.add_argument("--replay", action="store_true",
+                   help="rerun every logged failure and report which now decode")
     p.add_argument("--no-color", action="store_true", help="disable terminal colors")
     p.add_argument("--update", "-update", action="store_true",
                    help="self-update: pull latest code from the git repo this install was made from and reinstall into the active virtualenv")
@@ -220,6 +253,53 @@ def main(argv=None):
     if args.no_color:
         import autocrypt.ui as ui
         ui.COLOR_ENABLED = False
+    if args.replay:
+        # --replay: rerun every logged failure and report which now decode.
+        rpath = args.failures or DEFAULT_FILE
+        entries = list(_iter_failures(rpath))
+        total = len(entries)
+        passed = still_failed = bad = 0
+        print(f"Replay: {total} logged failure(s) from {rpath}")
+        for i, rec in enumerate(entries, 1):
+            try:
+                import base64 as _b64
+                data_r = _b64.b64decode(rec["input_b64"], validate=True)
+                flagf = rec.get("flag_format", r"\w{1,40}\{.*?\}")
+                tout = float(rec.get("timeout", 20.0))
+                md = int(rec.get("max_depth", 6))
+                paras = rec.get("params", "")
+                crib = rec.get("known_plaintext", "")
+                wl = rec.get("wordlist_path", "") or None
+                fast_r = bool(rec.get("fast", False))
+                deep_r = bool(rec.get("deep", False))
+                strict_r = bool(rec.get("strict", False))
+            except Exception:
+                bad += 1
+                print(f"[ERR ] #{i}: unusable record (bad input/fields)")
+                continue
+            try:
+                _fp, _res, _ctx = solve_data(
+                    data_r, flag_format=flagf, timeout=tout, top=8,
+                    known_plaintext=crib, wordlist_path=wl,
+                    params=paras, jobs=1, max_depth=md,
+                    fast=fast_r, deep=deep_r, strict=strict_r,
+                    failure_log_path=None)
+            except Exception as exc:
+                bad += 1
+                print(f"[ERR ] #{i}: exception {type(exc).__name__}: {exc}")
+                continue
+            if getattr(_ctx, "decoded", False) and _res:
+                passed += 1
+                top = _res[0]
+                txt = str(top.get("plaintext") or "")[:120]
+                print(f"[PASS] #{i}: {top['chain']} "
+                      f"({float(top['confidence']):.2f}) {txt!r}")
+            else:
+                still_failed += 1
+                print(f"[FAIL] #{i}: still undecoded (status={_res.status})")
+        print(f"\nReplay result: {passed} now pass, {still_failed} still fail, "
+              f"{bad} unusable record(s), {total} total.")
+        return 1 if bad else 0
     try:
         flag_regex = re.compile(args.flag_format, re.DOTALL)
     except re.error as exc:
@@ -238,6 +318,7 @@ def main(argv=None):
                 arg == "--flag-format" or arg.startswith("--flag-format=") for arg in argv),
             verbose=args.verbose, strict=args.strict,
             fast=args.fast, deep=args.deep,
+            failure_log_path=args.failures or DEFAULT_FILE,
         )
         if ctx.bug_log:
             for bname, typ, tb in ctx.bug_log:

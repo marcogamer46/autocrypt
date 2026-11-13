@@ -4,6 +4,8 @@
 set -u
 # Strict mode: any unexpected (bug-class) solver exception fails the suite.
 export AUTOCRYPT_STRICT=1
+# Tests must not append to the default failures.jsonl in the repo root.
+export AUTOCRYPT_NO_FAILURES_LOG=1
 cd "$(dirname "$0")"
 # Pick the interpreter: prefer the project venv (Windows), else python3.
 if [ -f ".venv/Scripts/python.exe" ]; then

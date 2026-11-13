@@ -705,3 +705,73 @@ Verification:
 - Exact objective replication matches emitted order for 9/9 present cases; per-j
   enumeration surfaces xor5_w2 true key at rank 0.
 - Version bumped 0.10.7 -> 0.10.8.
+
+## Phase 1 — failure log + --replay (v0.10.9)
+
+Date: 2026-11-13. Goal: when an input can't be decoded, append a JSON line to
+failures.jsonl (input, timestamp, decoders tried, best score); add `--replay`
+to rerun logged failures and report which now pass.
+
+Done:
+- `autocrypt/failures.py` (new): `build_record`/`record_failure` (JSONL
+  append), `iter_failures` (skips blank/malformed lines). Record fields:
+  version, timestamp (ISO+ms), input_b64, length, preview, charset, status,
+  decoders_tried (from `ctx.solver_times` keys), best_score, top_candidate,
+  flag_format, timeout, max_depth, params, jobs.
+- `cli.py` `solve_data()` gained `failure_log_path` param. After junk-filtering,
+  if no plaintext survived (and input non-empty), append a record. The replay-
+  affecting params (flag_format, timeout, max_depth, params, jobs) are recorded
+  so replay reproduces the original run. `ctx.decoded` set for reuse.
+- CLI flags: `--failures PATH` (default `failures.jsonl`) and `--replay`
+  (reads that file, reruns each via `solve_data`, prints `[PASS]`/`[FAIL]`
+  per entry + summary; P = pass, F = still fail, E = unusable record).
+- Test harness opt-out: `AUTOCRYPT_NO_FAILURES_LOG=1` exported in
+  `run_tests.sh` and `run_all_tests.sh` so suites don't pollute the repo.
+- Tests: `tests/test_failures.py` (record build/roundtrip, log-on-failure-
+  only, replay reports pass/fail, malformed-line skipping). 4/4 PASS.
+- Docs: created `CHANGELOG.md`; README flags table + example for
+  `--failures`/`--replay`; version bumped 0.10.8 -> 0.10.9.
+
+Decisions:
+- Logging lives in `solve_data()` so any entry point (CLI and future UI
+  paths) can enable it; only the CLI enables it by default. Replay passes
+  `failure_log_path=None` so it never re-logs.
+- "Failure" = final junk-filtered results are empty (covers NOT_FOUND,
+  TIMEOUT, TOO_SHORT, SOLVER_FAILED). A false-positive statistical recovery
+  still counts as decoded (not logged) — correct: the tool can't know it's
+  wrong, and replay exposes it anyway.
+- No dedup of repeated identical inputs (spec says "append"); replay handles
+  duplicates naturally.
+- `jobs=1` during replay for determinism and to avoid pool overhead.
+
+Known issues: a "recovered" false positive (statistical flag-like output) is
+not logged even though it isn't a real decode; that's by design and reported
+by replay only if it later fails. No other known issues.
+
+After: all 43 existing test files + `test_failures.py` pass (full suite run in
+progress at write time). Next: Phase 2 (scoring) awaits "go".
+
+Addendum (Phase 1 hardening, after adversarial review):
+- Review (Workflow, 20 agents / 16 confirmed findings) found 3 real bugs, all
+  fixed:
+  1. Replay crashed on a valid-JSON record with non-numeric timeout/max_depth
+     (conversions sat outside the per-record try/except). Moved all field
+     parsing inside the guarded block -> counted as unusable, loop continues.
+  2. iter_failures raised UnicodeDecodeError on a non-UTF8 byte in the log
+     (strict decode). Now opens with errors="replace" -> line skipped as
+     malformed.
+  3. Replay fidelity gap: known_plaintext/wordlist_path/fast/deep/strict were
+     not recorded nor restored. Now persisted in build_record and passed back
+     in replay; docstring updated to name exactly the recorded fields.
+- Test suite extended to 9 checks: full record read-back parity, deterministic
+  (non-flaky) failure blob, utf-8 log reads (was cp1252-dependent), missing-file
+  handling, OSError-swallow, env-guard suppression, and both unusable-record
+  replay branches (bad base64 + bad timeout), each verified not to crash and to
+  count as unusable.
+- Known limitations (documented, not fixed in Phase 1): (a) a single solver can
+  violate the global deadline (e.g. b16-shift-vigenere on some inputs) and hang
+  a run past --timeout — pre-existing core behavior, affects normal runs and
+  replay alike; (b) a hand-edited log could inject a pathological flag_format
+  regex (valid but catastrophic-backtracking); an invalid regex is caught, but
+  a slow-but-compiling one is not bounded. Both are adversarial/log-trust edge
+  cases, not reachable from operationally-written logs.
