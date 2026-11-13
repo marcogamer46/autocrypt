@@ -929,3 +929,22 @@ Linux installers so `autocrypt` is a global command, and add
   (`p1..pN`/`q1..qN`) were misread as ciphertext blocks, making `test_e4`
   (multi-prime) time out (5/10 → after excluding `p\d+/q\d+` values from block
   detection, back to 10/10). Full suite 50/50. Committed as follow-up.
+
+## Session: morse punctuation/leniency + binary padded tokens + UI save auto-create (v0.11.6)
+
+- User asked "also add like it can decode morse" and "morse and simple binary like
+  11011010", and reported a UI save path that failed ("instaed of finding it will
+  create the file"). Also pasted a live UI transcript of `-.. --- - ... .- -. -..
+  -.. .- ... .... . ...` whose top-ranked result was junk (`fxoae{atet}ow`).
+- Morse: added punctuation to `_MORSE`, `|` letter separator, lenient unknown-token
+  handling. Binary: per-token left-pad path so `1001000 1101001` → `Hi`; non 0/1
+  stripped. `_save` auto-creates missing parent dirs (txt+json).
+- The live pasted input genuinely decodes to `DOTSANDDASHES`; the junk at the top of
+  its result list is a pre-existing beam/scoring artifact (layered transforms fabricate
+  `{...}` flag shells that get a quadgram flag bonus), not a morse defect — left alone
+  to avoid destabilizing the scoring battery. Locked the morse recovery in with
+  `test_morse_live_ui_input`.
+- Verification: `test_morse_binary.py` (unit + integration) green; `test_ui_safety.py`
+  (incl. `test_save_creates_parent_dirs`) green; `test_rsa_ui_phase7.py` green; full
+  suite 51/51.
+- Version bumped 0.11.5 -> 0.11.6.

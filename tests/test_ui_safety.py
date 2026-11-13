@@ -116,12 +116,34 @@ def test_timeout_invariance():
     print(f"OK  timeout-invariance: top-1 stable t=10 vs 20 ({a[0]})")
 
 
+def test_save_creates_parent_dirs():
+    """_save must auto-create missing parent directories (both .txt and .json)
+    instead of failing with 'No such file or directory'."""
+    import tempfile
+    from unittest import mock
+    import autocrypt.ui as ui
+    rows = [{"chain": "vigenere(key=lemon)", "plaintext": "academy{vig_save}",
+             "confidence": 0.99, "is_flag": True}]
+    base = tempfile.mkdtemp()
+    for dirname, rel in (("nested_txt", "deep/nested/out.txt"),
+                         ("nested_json", "deep/nested/out.json")):
+        p = Path(base) / dirname / rel
+        assert not p.parent.exists(), "precondition: parent missing"
+        with mock.patch("builtins.input", return_value=str(p)):
+            ui._save(rows)
+        assert p.exists(), f"save did not create {rel}"
+        content = p.read_text(encoding="utf-8")
+        assert "academy{vig_save}" in content
+    print("OK  _save auto-creates missing parent directories")
+
+
 def main():
     test_verdict_banner_self_safe()
     test_results_panel_preview_and_notes()
     test_panels_render_under_reconfigured_stdout()
     test_no_color_flag_disables_ansi()
     test_timeout_invariance()
+    test_save_creates_parent_dirs()
     print("UI_SAFETY: ALL OK")
 
 

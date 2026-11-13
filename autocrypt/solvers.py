@@ -355,10 +355,35 @@ def solve_url(data, ctx):
 @solver("binary", lambda fp: _prior(fp, "binary"))
 def solve_binary(data, ctx):
     try:
-        bits = re.sub(rb"\s+", b"", data).decode("ascii")
-        out = bytes(int(bits[i:i + 8], 2) for i in range(0, len(bits) - 7, 8))
+        raw = data.decode("ascii", "ignore")
+        tokens = [t for t in re.split(r"\s+", raw) if t]
+        flat = "".join(tokens)
+        bits = re.sub(r"[^01]", "", flat)
+        if not bits:
+            return
+        emitted = []
+        # Standard byte stream: 8-bit groups from the start.
+        out = bytes(int(bits[i:i + 8], 2)
+                    for i in range(0, len(bits) - 7, 8))
         if out:
             yield from _emit(ctx, out, "binary")
+            emitted.append(out)
+        # Space-separated tokens: left-pad each token to 8 bits so leading-zero
+        # stripped bytes recover (e.g. "1001000 1101001" -> "Hi").
+        if len(tokens) > 1:
+            padded = []
+            for t in tokens:
+                bbits = re.sub(r"[^01]", "", t)
+                if not bbits or len(bbits) > 8:
+                    padded = []
+                    break
+                padded.append("0" * (8 - len(bbits)) + bbits)
+            if padded:
+                blob = "".join(padded)
+                out2 = bytes(int(blob[i:i + 8], 2)
+                             for i in range(0, len(blob), 8))
+                if out2 and out2 not in emitted:
+                    yield from _emit(ctx, out2, "binary (padded)")
     except (ValueError, UnicodeError):
         return
 
@@ -393,21 +418,37 @@ _MORSE = {
     "-.--": "Y", "--..": "Z", "-----": "0", ".----": "1", "..---": "2",
     "...--": "3", "....-": "4", ".....": "5", "-....": "6", "--...": "7",
     "---..": "8", "----.": "9",
+    # Common punctuation.
+    ".-.-.-": ".", "--..--": ",", "..--..": "?", ".----.": "'",
+    "-.-.--": "!", "-..-.": "/", "-.--.": "(", "-.--.-": ")",
+    ".-...": "&", "---...": ":", "-.-.-.": ";", "-...-": "=",
+    ".-.-.": "+", "-....-": "-", "..--.-": "_", ".-..-.": '"',
+    "...-..-": "$", ".--.-.": "@",
 }
 
 
 @solver("morse", lambda fp: _prior(fp, "morse"))
 def solve_morse(data, ctx):
     try:
-        chunks = re.split(rb"\s{2,}|/", data.strip())
+        s = data.decode("ascii", "ignore").strip()
+        if not s:
+            return
+        # '|' is also used as a letter separator in the wild; normalize to space.
+        s = s.replace("|", " ")
+        # Words are separated by '/' or runs of 2+ spaces; letters by single
+        # spaces. Unknown tokens are skipped rather than aborting the decode.
         words = []
-        for chunk in chunks:
-            tokens = chunk.split()
-            words.append("".join(_MORSE[t.decode()] for t in tokens))
+        for raw in re.split(r"/|\s{2,}", s):
+            raw = raw.strip()
+            if not raw:
+                continue
+            letters = [_MORSE[t] for t in raw.split() if t in _MORSE]
+            if letters:
+                words.append("".join(letters))
         out = " ".join(words)
         if out:
             yield from _emit(ctx, out, "morse")
-    except (KeyError, UnicodeError):
+    except UnicodeError:
         return
 
 

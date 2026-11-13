@@ -4,6 +4,19 @@ All notable changes to AutoCrypt are recorded here. Format: version → notable
 changes. See `PROGRESS.md` for detailed work logs and `LOGS.md` for the
 chronological session record.
 
+## 0.11.6 (unreleased) — morse punctuation/leniency + binary padded tokens + save fix
+
+- **Morse**: added common punctuation to the table (`. , ? ' ! / ( ) & : ; = + - _ " $ @`);
+  `|` is now accepted as a letter separator in place of space; unknown tokens are
+  skipped instead of aborting the whole decode.
+- **Binary**: space-separated tokens are left-padded to 8 bits each, so leading-zero
+  stripped bytes recover (e.g. `1001000 1101001` → `Hi`) alongside the standard 8-bit
+  stream; non `0/1` characters are ignored.
+- **UI save fix**: `_save` now auto-creates missing parent directories (txt and json)
+  instead of failing with "No such file or directory".
+- Tests: `tests/test_morse_binary.py` (unit-level solver checks + live-UI integration);
+  `tests/test_ui_safety.py::test_save_creates_parent_dirs`.
+
 ## 0.11.5 (unreleased) — RSA mode UX + block-RSA + d-only decryption
 
 - **RSA mode** (was "Enter RSA parameters"): the menu entry is now

@@ -393,15 +393,22 @@ def _save(results):
     public = [{k: row[k] for k in ("chain", "plaintext", "confidence", "is_flag")}
               for row in results]
     try:
-        if Path(path).suffix.lower() == ".json":
-            Path(path).write_text(json.dumps(public, ensure_ascii=False, indent=2) + "\n",
-                                  encoding="utf-8")
+        out = Path(path).expanduser()
+        # Auto-create missing parent directories instead of failing.
+        if out.parent and not out.parent.exists():
+            try:
+                out.parent.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass  # surfaced below by write_text
+        if out.suffix.lower() == ".json":
+            out.write_text(json.dumps(public, ensure_ascii=False, indent=2) + "\n",
+                           encoding="utf-8")
         else:
             text = "\n\n".join(
                 f"{i}. {row['chain']}\nConfidence: {row['confidence']:.2f}"
                 f"{' FLAG' if row['is_flag'] else ''}\n{row['plaintext']}"
                 for i, row in enumerate(results, 1))
-            Path(path).write_text(text + "\n", encoding="utf-8")
+            out.write_text(text + "\n", encoding="utf-8")
         print(paint(f"Saved full results to {path}", "green"))
     except OSError as exc:
         print(paint(f"Could not save: {exc}", "red"))

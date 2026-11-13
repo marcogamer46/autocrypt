@@ -1022,3 +1022,24 @@ Verification: `test_rsa_ui_phase7.py` (14 checks) pass; CYBERCONNECT block-RSA
 solved; full suite 50/50 (after excluding `p1..pN`/`q1..qN` source-hint primes
 from block detection, which had caused `test_e4` multi-prime timeouts).
 gzip/zlib/bzip2 decompression sanity-checked. Next: Phase 7 (RSA UI mode).
+
+## 0.11.6 — morse punctuation/leniency + binary padded tokens + UI save auto-create
+
+Task: user asked "also add like it can decode morse" and "morse and simple binary
+like 11011010", plus a UI save failure that should auto-create missing directories.
+
+Implemented:
+- `autocrypt/solvers.py` solv_morse: added punctuation to `_MORSE` (`. , ? ' ! / ( ) & : ; = + - _ " $ @`),
+  normalized `|` to a letter separator, and switched from strict (one unknown token
+  aborted the whole decode) to lenient (unknown tokens skipped). Word split still on
+  `/` or 2+ spaces; letters on single spaces.
+- `solve_binary`: keeps the standard 8-bit stream, and adds a padded path — space-
+  separated tokens are left-padded to 8 bits each so leading-zero stripped bytes
+  recover (`1001000 1101001` → `Hi`); non `0/1` characters are stripped.
+- `autocrypt/ui.py` `_save`: expanduser + parent-`mkdir(parents=True, exist_ok=True)`
+  so saving to a not-yet-existing folder creates it (txt and json).
+
+Verification: `tests/test_morse_binary.py` (solver-level unit checks + the exact live
+UI morse input, which recovers `DOTSANDDASHES` end-to-end) green; `test_ui_safety.py`
+(including `test_save_creates_parent_dirs`) green; `test_rsa_ui_phase7.py` green; full
+suite (see LOGS for the run).
