@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import binascii
 import bisect
+import bz2
 import collections
 import gzip
 import hashlib
@@ -473,7 +474,9 @@ def solve_pem(data, ctx):
         return
 
 
-@solver("zlib/gzip", lambda fp: max(_prior(fp, "gzip"), _prior(fp, "zlib")))
+@solver("zlib/gzip", lambda fp: max(
+    _prior(fp, "gzip"), _prior(fp, "zlib"),
+    (.35 if fp["charset"] == "binary" and 4 <= fp["length"] <= 10_000_000 else 0.0)))
 def solve_compression(data, ctx):
     try:
         if data.startswith(b"\x1f\x8b"):
@@ -481,13 +484,63 @@ def solve_compression(data, ctx):
             out = obj.decompress(data, 10_000_001)
             if len(out) <= 10_000_000 and obj.eof:
                 yield from _emit(ctx, out, "gzip")
+        elif data.startswith(b"BZh"):
+            # bzip2 (Phase 6): magic 'BZh' + block size digit.
+            out = bz2.decompress(data)
+            if len(out) <= 10_000_000:
+                yield from _emit(ctx, out, "bzip2")
         elif len(data) >= 2 and data[0] == 0x78:
             obj = zlib.decompressobj()
             out = obj.decompress(data, 10_000_001)
             if len(out) <= 10_000_000 and obj.eof:
                 yield from _emit(ctx, out, "zlib")
-    except zlib.error:
+    except (zlib.error, OSError, ValueError):
         return
+
+
+@solver("utf16-text", lambda fp: .30 if fp["charset"] in ("binary", "mixed") and fp["length"] >= 4 else 0)
+def solve_utf16_text(data, ctx):
+    """Decode UTF-16/UTF-32 text (LE/BE), BOM-autodetected (Phase 6)."""
+    pairs = []
+    if data.startswith(b"\xff\xfe\x00\x00") and len(data) % 4 == 0:
+        pairs.append(("utf-32-le", data[4:]))
+    elif data.startswith(b"\x00\x00\xfe\xff") and len(data) % 4 == 0:
+        pairs.append(("utf-32-be", data[4:]))
+    elif data.startswith(b"\xff\xfe") and len(data) % 2 == 0:
+        pairs.append(("utf-16-le", data[2:]))
+    elif data.startswith(b"\xfe\xff") and len(data) % 2 == 0:
+        pairs.append(("utf-16-be", data[2:]))
+    else:
+        if len(data) % 4 == 0:
+            pairs.append(("utf-32-le", data))
+            pairs.append(("utf-32-be", data))
+        if len(data) % 2 == 0:
+            pairs.append(("utf-16-le", data))
+            pairs.append(("utf-16-be", data))
+    seen = set()
+    for name, raw in pairs:
+        if name in seen:
+            continue
+        seen.add(name)
+        try:
+            txt = raw.decode(name, "strict")
+        except (UnicodeDecodeError, ValueError):
+            continue
+        if not txt.strip():
+            continue
+        printable = sum(c.isprintable() or c in "\r\n\t " for c in txt) / max(1, len(txt))
+        if printable < 0.8:
+            continue
+        sc = _rank_score(txt)
+        pf = flag_plausibility(txt)
+        fo = _hint_flag_only(txt)
+        if fo:
+            yield fo, name, {}, .99
+        elif pf > 0 or sc >= .55:
+            conf = .97 if pf > 0 else max(.6, min(.95, sc))
+            yield txt, name, {}, conf
+        else:
+            yield txt, name, {}, max(.5, sc)
 
 
 @solver("reverse", lambda fp: .35 if fp["charset"] == "ascii-text" and fp["length"] > 3 else 0)
@@ -1915,10 +1968,51 @@ def _margin_conf(margin):
     return .62 + .35 * max(0.0, min(1.0, margin / .5))
 
 
+def _xor_try_key(data, key):
+    """Phase 6: decrypt with a user-supplied --key (ASCII or hex bytes).
+
+    Yields (plaintext, chain, params, confidence) only when the result is
+    flag-shaped or clearly English; otherwise returns nothing so the automatic
+    crack still runs.
+    """
+    if not key:
+        return []
+    keys = []
+    kb = key.encode("utf-8", "replace")
+    if kb:
+        keys.append(kb)
+    h = key.strip()
+    if len(h) >= 2 and len(h) % 2 == 0 and all(c in "0123456789abcdefABCDEF" for c in h):
+        try:
+            keys.append(bytes.fromhex(h))
+        except ValueError:
+            pass
+    out = []
+    for k in dict.fromkeys(keys):
+        if not k:
+            continue
+        if len(k) == 1:
+            pt = bytes(b ^ k[0] for b in data)
+        else:
+            pt = bytes(b ^ k[i % len(k)] for i, b in enumerate(data))
+        txt = pt.decode("utf-8", "replace")
+        sc = _rank_score(txt)
+        pf = flag_plausibility(txt)
+        fo = _hint_flag_only(txt)
+        if fo:
+            out.append((fo, f"XOR(key={key})", {"key": key}, .99))
+        elif pf > 0 or sc >= .55:
+            conf = .97 if pf > 0 else max(.6, min(.95, sc))
+            out.append((txt, f"XOR(key={key})", {"key": key}, conf))
+    return out
+
+
 @solver("xor-single-byte", lambda fp: _xor_prior(fp) if fp["length"] <= 10_000 else 0)
 def solve_xor_single(data, ctx):
     if not data or ctx.depth > 3:
         return
+    for _cand in _xor_try_key(data, getattr(ctx, "key", "")):
+        yield _cand[0], _cand[1], _cand[2], _cand[3]
     cribs = [ctx.known_plaintext.encode("utf-8")] if ctx.known_plaintext else []
     cribs.extend((b"flag{", b"ctf{", b"FLAG{"))
     found = {}
@@ -2070,6 +2164,8 @@ def _flag_crib_xor(data):
 def solve_xor_repeating(data, ctx):
     if len(data) < 12 or len(data) > 100_000 or ctx.depth > 3:
         return
+    for _cand in _xor_try_key(data, getattr(ctx, "key", "")):
+        yield _cand[0], _cand[1], _cand[2], _cand[3]
     cands = []    # (adjusted score, key, plaintext)
     n = len(data)
     mdl = lambda L: L * math.log(256) / n          # cost of describing the key, per char

@@ -906,5 +906,39 @@ Decisions:
   the interactive path to it.
 
 Verification: `test_ui_phase5.py` + `test_ui_safety.py` + `test_beam.py` +
-`test_vigenere_crack.py` all pass. Next: Phase 6 (extras: XOR/hex/binary +
-  more CyberChef-style decoders + no throttling).
+`test_vigenere_crack.py` all pass.
+
+## Phase 6 — extras: XOR user key, UTF-16, bzip2, no throttling (v0.11.3)
+
+Goal: round out the decoder set (more CyberChef-style operations) and let the
+user-supplied key also drive XOR; confirm no artificial throttling.
+
+Done:
+- `autocrypt/solvers.py`:
+  - `_xor_try_key(data, key)`: decrypts single-byte OR repeating-key XOR with a
+    user-supplied `--key` (tried both as ASCII and as hex bytes); yields only
+    when the result is flag-shaped or clearly English. Wired into
+    `solve_xor_single` and `solve_xor_repeating`. A wrong key yields nothing, so
+    the auto-crack branch still runs.
+  - `solve_utf16_text`: new `utf16-text` solver decodes UTF-16/UTF-32 LE/BE
+    (BOM-autodetected, then endian guesses), gated on printable ratio +
+    English/flag scoring. Fires for `binary`/`mixed` charsets.
+  - `solve_compression`: now also decodes bzip2 (`BZh…`); solver prior widened
+    so compressed blobs trigger it regardless of gzip/zlib hypothesis.
+  - No artificial delays/throttling exist in solvers (the budget-aware
+    scheduler is the only pacing mechanism).
+- Tests: `tests/test_extras_phase6.py` (7 checks): UTF-16LE, UTF-16BE, bzip2,
+  single-byte XOR with key, repeating XOR with key, wrong-key-no-crash +
+  auto-crack, CLI `--key` XOR end-to-end.
+
+Decisions:
+- `--key` semantics are deliberately permissive: it is tried as both ASCII and
+  hex bytes for XOR, and used directly by Vigenère. It never overrides or
+  disables the automatic crack — it just adds a high-confidence direct path.
+- UTF-16 decoding is limited to printable, English/flag-plausible output to
+  avoid emitting noise from arbitrary binary; low-confidence candidates are
+  junk-filtered downstream as usual.
+
+Verification: `test_extras_phase6.py` passes; regression batch (xorfamily,
+encoding_variants, vigenere_crack, beam, ui_phase5, blind, multijob) all pass;
+gzip/zlib/bzip2 decompression sanity-checked. Next: Phase 7 (RSA UI mode).

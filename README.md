@@ -253,7 +253,7 @@ parsing — challenge `.py` files are never executed, only read.
 | `--fast` | ~half the time: shorter per-solver slices, skip the slowest brute-force solvers |
 | `--deep` | 2× per-solver time + deeper layered decode search (max depth 6→9) |
 | `--beam-width N` | max children expanded per search node (default 64; use a small N for speed, larger for stacked classical layers) |
-| `--key KEY` | known cipher key (e.g. a Vigenère keyword); blank = crack automatically |
+| `--key KEY` | known cipher key (Vigenère keyword, or an ASCII/hex XOR key); blank = crack automatically |
 | `--failures PATH` | append undecoded inputs as JSONL to PATH (default `failures.jsonl`); also read by `--replay` |
 | `--replay` | rerun every logged failure and report which now decode |
 | `--no-color` | disable ANSI colors |

@@ -4,6 +4,20 @@ All notable changes to AutoCrypt are recorded here. Format: version → notable
 changes. See `PROGRESS.md` for detailed work logs and `LOGS.md` for the
 chronological session record.
 
+## 0.11.3 (unreleased) — Phase 6: extras — UTF-16, bzip2, XOR user key
+
+- **UTF-16 / UTF-32 text** decoder (`utf16-text`): auto-detects BOM and endian
+  (LE/BE), recovers flags hidden in wide-character text.
+- **bzip2 decompression**: the existing compression solver now also decodes
+  bzip2 (`BZh…` magic), alongside gzip and zlib.
+- **XOR with a user key**: the single-byte and repeating-key XOR solvers now
+  honor `--key` (ASCII or hex bytes) — a supplied key decrypts immediately,
+  while a blank key keeps the statistical crack. A wrong key never breaks the
+  auto-crack path.
+- No artificial throttling is present in solvers; per-solver work stays on the
+  budget-aware scheduler.
+- Tests: `tests/test_extras_phase6.py`.
+
 ## 0.11.2 (unreleased) — Phase 5: UI input modes (paste ciphertext + key)
 
 - Interactive UI: pasting ciphertext now prompts for an optional cipher key
