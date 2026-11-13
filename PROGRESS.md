@@ -681,3 +681,27 @@ Verification:
   no-timeout invocation — confirmed pre-existing at HEAD (same result with the
   working tree stashed). The solver solves it given a scheduler deadline, so
   the `run_tests.sh` case now passes `--timeout 25` explicitly.
+
+## 0.10.8 — xor5_w2 fix (flag-aware objective + per-brace-position enumeration)
+
+Problem: `test_xorfamily.py` was 9/10; `xor5_w2` (base64 wrapper, repeating-key
+XOR, L=5) failed to surface its true flag `AuLlm{k3ys_w3b}`.
+
+Root cause (two independent failures):
+1. Objective ranking: old `_flagaware` allowed the noisy unigram term to
+   outrank a genuine flag when a mixed-case prefix was present. Replaced the
+   flag bonus with structural evidence `_flag_evidence`: dictionary-token
+   fraction (real WORDS + `_leet_word_variants`), body purity, brace-prefix
+   shape; `_presort` mirror updated.
+2. Search reachability: joint-trim dropped true bytes (ranks 45/24/38) and
+   greedy-ascent basins were too narrow for the true period-5 key. Added a
+   per-brace-position (j) shape enumeration (gate: L>=4 and n<=60): j-specific
+   survivor masks per column, top-24 unigram cap, product<=40k trim, a
+   `_presort` beam (cap 3000) across all j scored by `_flagaware`.
+
+Verification:
+- `test_xorfamily.py` → 10/10.
+- All 43 `tests/test_*.py` PASS; `run_tests.sh` TOTAL=43 PASS=43 FAIL=0.
+- Exact objective replication matches emitted order for 9/9 present cases; per-j
+  enumeration surfaces xor5_w2 true key at rank 0.
+- Version bumped 0.10.7 -> 0.10.8.

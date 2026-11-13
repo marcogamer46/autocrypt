@@ -2083,26 +2083,38 @@ def solve_xor_repeating(data, ctx):
                     hits += 1
             return (hits / total) if total else 0.0
 
+        def _flag_evidence(txt, m):
+            """Structural evidence that a flag-shaped candidate is a genuine
+            recovery. Body dictionary-content (leet words) is the reliable
+            signal; the raw unigram term is noise for mixed-case leet flags, so
+            it should not dominate once a full shape is established. Also
+            penalize structural anomalies of a misplaced brace: a long prefix or
+            an underscore immediately before '{' means the boundary is probably
+            not the real one."""
+            pre = m.group(0)[:m.group(0).index("{")]
+            body = m.group(0)[m.group(0).index("{") + 1:-1]
+            toks = [t for t in body.lower().split("_")
+                    if any(ch.isalpha() for ch in t)]
+            dict_toks = sum(1 for t in toks
+                            if any(v in WORDS for v in _leet_word_variants(t)))
+            tot = max(1, len(toks))
+            frac = dict_toks / tot
+            pure = sum(c.isalnum() or c == "_" for c in body) / max(1, len(body))
+            bad_pre = 1.0 if ("_" in pre) or len(pre) > 8 else 0.0
+            return 3.0 + 5.0 * frac + 1.5 * pure \
+                + 1.0 * min(1.0, dict_toks - 1) - 1.5 * bad_pre
+
         def _flagaware(o):
             txt = o.decode("latin-1")
-            pts = plain_text_score(o, flag_bonus=True)
-            base = pts
+            pts = plain_text_score(o, flag_bonus=False)
             m = _FLAGISH_LOCAL.search(txt)
             if m and (m.end() - m.start()) >= 0.9 * max(1, len(txt)):
-                body = m.group(0)[m.group(0).index("{") + 1:-1]
-                alnum_frac = sum(c.isalnum() for c in body) / max(1, len(body))
-                # A complete, well-formed flag is a strong structural signal;
-                # plain_text_score alone can prefer punctuation-like junk.
-                # Weight the real leet-word evidence above cosmetic shape.
-                base += 2.5 + 4.0 * _leet_body_dict_frac(body) + 0.6 * alnum_frac
-            else:
-                # Plain-English decodes (no flag shape) must also compete: add a
-                # dictionary-gated English bonus so real English beats
-                # brace-shaped gibberish.
-                ec = english_confidence(txt)
-                if ec >= 0.5:
-                    base += 1.2 * ec + 0.5
-            return base
+                return pts + _flag_evidence(txt, m)
+            # Plain-English decodes (no flag shape) must also compete: add a
+            # dictionary-gated English bonus so real English beats
+            # brace-shaped gibberish.
+            ec = english_confidence(txt)
+            return pts + (1.2 * ec + 0.5 if ec >= 0.5 else 0.0)
         _has_flag_shape = bool(_FLAGISH_LOCAL.search(_ascii_txt)) if _ascii_txt else False
         crib_seeds = [k for k in crib_keys]
         # Crib-derived keys are shape-consistent full keys: score them with the
@@ -2269,14 +2281,16 @@ def solve_xor_repeating(data, ctx):
                         best = None
                     def _presort(o):
                         # Cheap proxy for the flag-aware objective: plain-text
-                        # score plus leet-body dictionary evidence (the real
-                        # discriminator for flag bodies). Only pay for the
-                        # leet analysis when a flag body is actually present.
-                        pts = plain_text_score(o, flag_bonus=True)
+                        # score plus the structural flag evidence (body
+                        # dictionary-content, purity, prefix sanity). Must stay
+                        # consistent with _flagaware so the true key is never
+                        # pruned before the full objective sees it.
+                        pts = plain_text_score(o, flag_bonus=False)
                         t = o.decode("latin-1")
-                        if "{" not in t or "}" not in t:
-                            return pts
-                        return pts + 4.0 * leet_body_dict_fraction(t)
+                        m = _FLAGISH_LOCAL.search(t)
+                        if m and (m.end() - m.start()) >= 0.9 * max(1, len(t)):
+                            return pts + _flag_evidence(t, m)
+                        return pts
                     fast_top = []
                     for combo in itertools.product(*capped):
                         if len(fast_top) < 5000:
@@ -2306,6 +2320,82 @@ def solve_xor_repeating(data, ctx):
                                 _mb_body = _mb_m.group(0)[_mb_m.group(0).index("{") + 1:-1]
                                 if _leet_body_dict_frac(_mb_body) >= 0.6:
                                     _short_flag_found = True
+                    # Per-brace-position shape enumeration (short flags): the flag
+                    # shape constraint for a FIXED brace position often pins
+                    # whole columns (some positions leave a single surviving
+                    # byte). Enumerating each position's reduced column space
+                    # guarantees the true key is scored even when per-column
+                    # unigram ranking is weak (short columns: n/L small) and a
+                    # greedy ascent local-minima away from it. A cheap _presort
+                    # beam keeps the costly full-objective pass bounded.
+                    if L >= 4 and n <= 60:
+                        _b64 = _xor_masks()
+                        _ok_mask = (1 << 256) - 1
+                        _beam = []
+                        for _j in range(2, min(30, n - 3) + 1):
+                            _surv = []
+                            _bad = False
+                            for _c in range(L):
+                                _idx = idxs[_c]
+                                _A = [_ok_mask]
+                                for _i in _idx:
+                                    _A.append(_A[-1] & _b64["alnum"][data[_i]])
+                                _S = [_ok_mask] * (len(_idx) + 1)
+                                for _u in range(len(_idx) - 1, -1, -1):
+                                    _S[_u] = _S[_u + 1] & (
+                                        _ok_mask if _idx[_u] == n - 1
+                                        else _b64["body"][data[_idx[_u]]])
+                                _t = bisect.bisect_left(_idx, _j)
+                                _m = _A[_t]
+                                _u = _t
+                                if _u < len(_idx) and _idx[_u] == _j:
+                                    _m &= _b64["open"][data[_j]]
+                                    _u += 1
+                                _m &= _S[_u]
+                                if _idx and _idx[-1] == n - 1:
+                                    _m &= _b64["close"][data[n - 1]]
+                                _sv = [k for k in range(256) if _m >> k & 1]
+                                if not _sv:
+                                    _bad = True
+                                    break
+                                _surv.append(_sv)
+                            if _bad:
+                                continue
+                            _jcapped = [
+                                sorted(_sv, key=lambda k, cc=_cc: -sum(
+                                    plain_text_score_byte(x ^ k)
+                                    for x in data[cc::L]))[:24]
+                                for _cc, _sv in enumerate(_surv)]
+                            _prod = 1
+                            for _lst in _jcapped:
+                                _prod *= len(_lst)
+                            while _prod > 40_000 and any(
+                                    len(_l) > 1 for _l in _jcapped):
+                                _wi = max(range(L), key=lambda cc: len(_jcapped[cc]))
+                                del _jcapped[_wi][-1]
+                                _prod = 1
+                                for _lst in _jcapped:
+                                    _prod *= len(_lst)
+                            for _combo in itertools.product(*_jcapped):
+                                if len(_beam) < 3000:
+                                    _beam.append((_presort(_xor(data, bytes(_combo))),
+                                                 _combo))
+                                else:
+                                    _beam.sort(key=lambda t: -t[0])
+                                    del _beam[1500:]
+                                    _beam.append((_presort(_xor(data, bytes(_combo))),
+                                                 _combo))
+                        if _beam:
+                            _beam.sort(key=lambda t: -t[0])
+                            _perj_best = None
+                            for _, _combo in _beam[:3000]:
+                                _o = _xor(data, bytes(_combo))
+                                _sc = _flagaware(_o)
+                                if _perj_best is None or _sc > _perj_best[0]:
+                                    _perj_best = (_sc, _combo, _o)
+                            cands.append((_perj_best[0] - mdl(L),
+                                         _primitive_key(bytes(_perj_best[1])),
+                                         _perj_best[2]))
                     continue
                 # Coordinate ascent is only reliable from good seeds: the greedy
                 # per-column key, every flag-shape-constrained crib key of this

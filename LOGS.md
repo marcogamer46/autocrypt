@@ -865,3 +865,26 @@ Linux installers so `autocrypt` is a global command, and add
   HEAD via stash, and reproducible: works with `--timeout 25`, silent
   "No weakness found" without it). `run_tests.sh` even_e case now passes
   `--timeout 25`.
+
+## S46.01 — xor5_w2 fix: flag-aware objective + per-brace-position enumeration (v0.10.8)
+- Root-caused the last remaining suite failure (`xor5_w2` in `test_xorfamily.py`,
+  target 10/10) as TWO distinct defects:
+  1. **Objective ranking**: the old `_flagaware` let the noisy unigram score
+     (mean_UNI) outrank a true flag when a mixed-case flag prefix was present,
+     even when the flag body's dictionary content was equal. The joint objective
+     is now a structural-evidence `_flag_evidence` (dict-token fraction, body
+     purity, prefix shape) added on top of `plain_text_score`; the midpoint
+     `_presort` pre-filter was updated to match.
+  2. **Search reachability**: joint-trim (product cap 40k) dropped true bytes
+     (unigram rank 45/24/38), and the greedy-ascent basins for the true
+     period-5 key were too narrow to reach from any seed. Added a per-brace-
+     position (j) shape enumeration that, for L>=4 and short flags (n<=60),
+     builds j-specific survivor masks, caps each column to top-24 by unigram,
+     trims to product <=40k, and runs a `_presort` beam (cap 3000) across all
+     j, scored by `_flagaware` to surface the true key.
+- Verification:
+  - `test_xorfamily.py` → 10/10 (xor5_w2 true flag `AuLlm{k3ys_w3b}` surfaced).
+  - All 43 `tests/test_*.py` PASS; `run_tests.sh` → TOTAL=43 PASS=43 FAIL=0.
+  - Exact replication of the objective matched emitted ranking order for 9/9
+    present cases; per-j enumeration surfaced xor5_w2's true key at rank 0.
+- Version bumped 0.10.7 -> 0.10.8.
