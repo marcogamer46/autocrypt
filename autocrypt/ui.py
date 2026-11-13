@@ -255,7 +255,7 @@ _HELP = {
     "many-time-pad": ("Crib-drag multiple hex ciphertexts", "hex-cipher-1\\nhex-cipher-2"),
     "JWT": ("Decode JWT; try none/HS256 wordlist", "header.payload.signature"),
     "hash-identification": ("Identify/crack hash with wordlist", "5ebe2294ecd0e0f08eab7690d2a6ee69"),
-    "RSA": ("Small-e, factoring, and related attacks", "n=...,e=3,c=..."),
+    "RSA": ("Small-e, factoring, related attacks (optional p/q/d)", "n=...,e=3,c=..."),
 }
 
 _HELP.update({
@@ -408,6 +408,7 @@ def _save(results):
 
 def _solve(data, settings, params=""):
     import autocrypt
+    from autocrypt.failures import DEFAULT_FILE
     active = ["starting"]
     stop = threading.Event()
     tty = bool(getattr(sys.stdout, "isatty", lambda: False)())
@@ -436,6 +437,7 @@ def _solve(data, settings, params=""):
             wordlist_path=settings["wordlist"], params=params,
             progress_callback=progress, flag_format_explicit=settings["flag_format_explicit"],
             key=settings.get("key", ""),
+            failure_log_path=DEFAULT_FILE,
         )
     finally:
         if thread:
@@ -456,6 +458,17 @@ def _show(data, settings, params=""):
     print("\n".join(paint("Solver failure: " + f, "red") for f in dict.fromkeys(ctx.failures)))
     if results:
         print(results_panel(results))
+        # Phase 7: for RSA recoveries, also show the raw bytes as hex/byte
+        # counts so non-printable or binary plaintexts are still inspectable.
+        for r in results:
+            if r.get("chain", "").startswith("RSA"):
+                pt = r.get("plaintext", "")
+                try:
+                    raw = pt.encode("utf-8", "replace")
+                except Exception:
+                    raw = b""
+                if raw:
+                    print(paint(f"  RSA bytes ({len(raw)}): {raw.hex()}", "dim"))
     else:
         print(empty_panel(results.status))
     print(paint(f"Solved in {_elapsed:.1f}s (budget {settings['timeout']:.0f}s).", "dim"))
@@ -472,13 +485,49 @@ def _paste():
         lines.append(line)
     return "\n".join(lines).encode("utf-8")
 
+def _rsa_num(prompt, required):
+    """Read one RSA numeric field as a decimal string. Auto-detects hex: a
+    value is hex if it starts with 0x or contains any [a-f] hex digit (decimal
+    cannot contain those); otherwise it is taken as decimal."""
+    while True:
+        v = input(prompt).strip().replace(" ", "").replace("_", "")
+        if not v:
+            if required:
+                print(paint("Required.", "yellow"))
+                continue
+            return ""
+        try:
+            if v.lower().startswith("0x"):
+                return str(int(v, 16))
+            if any(c in "abcdefABCDEF" for c in v) and all(
+                    c in "0123456789abcdefABCDEF" for c in v):
+                return str(int(v, 16))
+            int(v, 10)  # validate decimal
+            return v
+        except ValueError:
+            print(paint(f"Not a valid number: {v}", "red"))
+
+
 def _rsa_input():
+    """Phase 7 RSA UI mode: n/e/c (required), optional p/q/d. Returns the
+    params spec string and its byte form for the solve pipeline."""
     first = input("Paste n=..., e=..., c=... (or enter n): ").strip()
     if not first:
         return "", b""
-    if "=" in first: return first, first.encode()
-    n, e, c = first, input("e: ").strip(), input("c: ").strip()
+    if "=" in first:
+        return first, first.encode()
+    n = _rsa_num("n: ", True)
+    e = _rsa_num("e: ", True)
+    c = _rsa_num("c: ", True)
     spec = f"n={n},e={e},c={c}"
+    # Optional private-key / CRT parts (auto-detected hex, blank to skip).
+    p = _rsa_num("p: (blank to skip) ", False)
+    q = _rsa_num("q: (blank to skip) ", False)
+    if p and q:
+        spec += f",p={p},q={q}"
+    d = _rsa_num("d: (blank to skip) ", False)
+    if d:
+        spec += f",d={d}"
     return spec, spec.encode()
 
 def _post_solve(results, settings):

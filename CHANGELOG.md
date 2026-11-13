@@ -4,6 +4,17 @@ All notable changes to AutoCrypt are recorded here. Format: version → notable
 changes. See `PROGRESS.md` for detailed work logs and `LOGS.md` for the
 chronological session record.
 
+## 0.11.4 (unreleased) — Phase 7: RSA UI mode with optional private exponent
+
+- **RSA UI mode** (`Enter RSA parameters`): accepts `n`/`e`/`c` (required) and
+  optional `p`/`q`/`d` (private exponent), each auto-detecting hex (0x or
+  `[a-f]` digits). The RSA solver now consumes a supplied `d` directly — it
+  decrypts with `m = c^d mod n` without factoring or attacking (`RSA known-d`
+  recovery), and the UI prints the recovered bytes as hex alongside the text.
+- RSA label scan now also recognizes `d`/`priv`/`private_exponent` in pasted
+  parameter text; `--params`/`--key` paths are unchanged.
+- Tests: `tests/test_rsa_ui_phase7.py`.
+
 ## 0.11.3 (unreleased) — Phase 6: extras — UTF-16, bzip2, XOR user key
 
 - **UTF-16 / UTF-32 text** decoder (`utf16-text`): auto-detects BOM and endian

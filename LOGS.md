@@ -888,3 +888,20 @@ Linux installers so `autocrypt` is a global command, and add
   - Exact replication of the objective matched emitted ranking order for 9/9
     present cases; per-j enumeration surfaced xor5_w2's true key at rank 0.
 - Version bumped 0.10.7 -> 0.10.8.
+
+## Session: Phase 7 — RSA UI mode, optional private exponent (v0.11.4)
+
+- Continued the planned roadmap. `_rsa_input` (Phase 7) already collected
+  optional p/q/d; this session made the RSA solver actually consume a supplied
+  `d`:
+  - `_rsa_values`: added `d`/`priv`/`private_exponent` to label aliases and to
+    the ascii-scan regex, so `d=…` is parsed from pasted parameter text.
+  - `solve_rsa`: new `RSA known-d` branch — with n, c and d present, decrypt
+    directly via `m = c^d mod n` and emit (incl. reversed-flag form), then
+    return. Placed right after the p/q-given path.
+  - `ui.py`: RSA help label advertises optional p/q/d; `_show` prints the RSA
+    plaintext bytes as a hex line; `--params` README row + UI note updated.
+- Generated a fixed 160-bit RSA example for tests. New
+  `tests/test_rsa_ui_phase7.py` (5 checks) passes, including an end-to-end CLI
+  parse of the spec on stdin recovering `academy{rsa_known_d_ok}`.
+- Version bumped 0.11.3 -> 0.11.4.

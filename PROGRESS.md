@@ -941,4 +941,40 @@ Decisions:
 
 Verification: `test_extras_phase6.py` passes; regression batch (xorfamily,
 encoding_variants, vigenere_crack, beam, ui_phase5, blind, multijob) all pass;
+
+## Phase 7 — RSA UI mode with optional private exponent (v0.11.4)
+
+Goal: let the interactive RSA flow accept a known private exponent `d` and
+decrypt directly, completing the menu-driven RSA path (n/e/c required, optional
+p/q/d). Also surface the recovered RSA plaintext bytes as hex in the results.
+
+Done:
+- `autocrypt/solvers.py`:
+  - `_rsa_values`: added `d` (and `priv`/`private_exponent`) to the label
+    aliases and to the ascii scan regex, so a `d=…` field is parsed from pasted
+    parameter text or `--params` regardless of how it arrives.
+  - `solve_rsa`: new `RSA known-d` branch — when `d` is supplied (with n and c),
+    decrypt directly with `m = c^d mod n` and emit via `_emit_rsa` (including
+    the reversed-flag variant), then return. Placed after the p/q-given path.
+- `autocrypt/ui.py`:
+  - `_rsa_input` (Phase 7) already prompts for optional p/q/d and emits a
+    `n=…,e=…,c=…,p=…,q=…,d=…` spec; updated the RSA help label to advertise
+    the optional p/q/d fields.
+  - `_show`: for `RSA`-chain results, prints the recovered plaintext bytes as a
+    hex line (raw byte count + hex) alongside the text row.
+- Docs: CHANGELOG 0.11.4, README `--params` row + interactive-UI note.
+- Tests: `tests/test_rsa_ui_phase7.py` (5 checks): solve_data param-with-d,
+  ascii-scan d from blob, `_params` parses d (decimal + hex), CLI end-to-end
+  via stdin spec recovers the flag.
+
+Decisions:
+- A supplied `d` is treated as decisive (like p/q or a factored result): after
+  emitting the known-d candidate the solver returns, trusting the user's key.
+  Works whether `d` is `≡ e⁻¹ mod φ(n)` or `mod λ(n)` (pow(c, d, n) holds for
+  either). A wrong d simply yields a low-scoring candidate that the ranker
+  drops.
+- The known-d branch sits after the p/q-given path so a user who supplies both
+  p/q and d gets the p/q verification; d is the fallback that avoids factoring.
+
+Verification: `test_rsa_ui_phase7.py` passes; full suite clean.
 gzip/zlib/bzip2 decompression sanity-checked. Next: Phase 7 (RSA UI mode).

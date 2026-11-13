@@ -91,8 +91,10 @@ python3 tests/test_matrix.py --both # exhaustive matrix checks
 > you want analyzed, and pick from the ranked recovery chains it finds. When
 > pasting ciphertext you can also supply an optional cipher key (blank = auto-
 > crack); the key is passed to the decoders (e.g. Vigenère) and can be seen or
-> cleared under **Settings → Cipher key**. This is the same `autocrypt`
-> command as everything above — just omit the file.
+> cleared under **Settings → Cipher key**. For RSA, the **Enter RSA
+> parameters** mode asks for `n`/`e`/`c` (required) and optional `p`/`q`/`d`
+> (auto-detecting hex); supplying `d` decrypts directly. This is the same
+> `autocrypt` command as everything above — just omit the file.
 
 ### Installation
 
@@ -249,7 +251,7 @@ parsing — challenge `.py` files are never executed, only read.
 | `--flag-format RE` | regex used for early/direct flag detection |
 | `--wordlist WORDLIST` | wordlist for hash / JWT-secret cracking |
 | `--known-plaintext CRIB` | known plaintext crib |
-| `--params PARAMS` | RSA parameters, e.g. `n=...,e=...,c=...` |
+| `--params PARAMS` | RSA parameters, e.g. `n=...,e=...,c=...` (optional `p=...`,`q=...` or `d=...`) |
 | `--fast` | ~half the time: shorter per-solver slices, skip the slowest brute-force solvers |
 | `--deep` | 2× per-solver time + deeper layered decode search (max depth 6→9) |
 | `--beam-width N` | max children expanded per search node (default 64; use a small N for speed, larger for stacked classical layers) |

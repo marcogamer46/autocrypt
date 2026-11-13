@@ -2878,7 +2878,7 @@ def _rsa_values(data, ctx):
         try:
             text = data.decode("ascii", "ignore")
             for key, value in re.findall(
-                r"\b(n\d*|modulus\d*|e\d*|exponent\d*|c\d*|ciphertext\d*|cyphertext\d*|cypher\d*|cipher\d*|ct\d*|enc\d*|encrypted\d*|message\d*|msg\d*|p\d*|q\d*|p_high|p_hi|phigh)\s*[:=]?\s*(0x[0-9a-f]+|\d+)",
+                r"\b(n\d*|modulus\d*|e\d*|exponent\d*|c\d*|ciphertext\d*|cyphertext\d*|cypher\d*|cipher\d*|ct\d*|enc\d*|encrypted\d*|message\d*|msg\d*|p\d*|q\d*|d\d*|priv\d*|private_exponent\d*|p_high|p_hi|phigh)\s*[:=]?\s*(0x[0-9a-f]+|\d+)",
                 text, re.I,
             ):
                 values.setdefault(key.lower(), value)
@@ -2888,6 +2888,7 @@ def _rsa_values(data, ctx):
     aliases = {
         "n": ("n", "modulus"), "e": ("e", "exponent"),
         "c": ("c", "ciphertext", "cyphertext", "cypher", "cipher", "ct", "enc", "encrypted", "message", "msg"),
+        "d": ("d", "priv", "private", "private_exponent", "d_"),
     }
     for target, keys in aliases.items():
         for key in keys:
@@ -2897,7 +2898,7 @@ def _rsa_values(data, ctx):
                     break
                 except (ValueError, TypeError):
                     pass
-    normalized.update({k: v for k, v in values.items() if re.fullmatch(r"(?:n|e|c|p|q)\d*", k)})
+    normalized.update({k: v for k, v in values.items() if re.fullmatch(r"(?:n|e|c|p|q|d)\d*", k)})
     # Partial factorization hint: high bits of a prime factor (Coppersmith).
     if "p_high" in values or "p_hi" in values:
         try:
@@ -3384,6 +3385,19 @@ def solve_rsa(data, ctx):
                             {"n": n, "e": e, "p": _pp,
                              "q": _qq, "d": _d, "m": _m})
                         return
+            except (TypeError, ValueError):
+                pass
+        # A supplied private exponent decrypts directly — no factoring needed.
+        # (Works whether d is ed ≡ 1 mod φ(n) or mod λ(n).)
+        _d_given = vals.get("d")
+        if _d_given is not None:
+            try:
+                _dd = int(_d_given)
+                _m = pow(c, _dd, n)
+                yield from _emit_rsa(
+                    ctx, _m, "RSA known-d",
+                    {"n": n, "e": e, "c": c, "d": _dd, "m": _m})
+                return
             except (TypeError, ValueError):
                 pass
         # Small exponent: recover via an exact integer root. Earlier this only
