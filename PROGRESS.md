@@ -1,5 +1,32 @@
 # autocrypt progress
 
+## 0.11.8 (2026-11-13) — fix Caesar flag-shaped recovery
+
+User: "the ceasar cpher cant solve this jzww{la_ab_iybal} please fix it and do
+commit and push after u fix it". `jzww{la_ab_iybal}` now solves to
+`cspp{et_tu_brute}` (Caesar shift 7/19, "et tu, Brute") at rank #1.
+
+What was wrong:
+- The 0.11.7 `cracked Caesar` branch referenced `_FLAGISH` without importing it →
+  `NameError` per call; per-solver exceptions are swallowed, so the solver silently
+  produced no candidates and `as-is` masked the result at 0.96.
+- Even with the import fixed, its gain metric (`leet_body_dict_fraction`, on the
+  small `_COMMON` set) scored the target body `et_tu_brute` as 0.0 (`et`/`tu`/
+  `brute` ∉ `_COMMON`).
+
+What changed (`autocrypt/solvers.py`):
+- `_large_wordlist()` lazily loads `english_words.txt` (370k general English words)
+  into a cached set (fallback `frozenset()` if the file is absent).
+- `_flag_body_coherence(text)` = fraction of `{body}` underscore-tokens that are
+  real dictionary words (falls back to `leet_body_dict_fraction` without the big list).
+- The cracked-Caesar branch uses `_flag_body_coherence`; fires when the best shift's
+  body fraction ≥ 0.75 and gains > 0.05 over the input, surfacing at 0.99. Guarded
+  so random shifts don't fire. No known-prefix gate — works for any encrypted prefix.
+
+Verification: `tests/test_caesar_flagshape.py` gains
+`test_caesar_nonenglish_latin_body_recovers`; caesar + morse/binary suites green;
+full suite green. Version bumped 0.11.7 → 0.11.8, committed and pushed.
+
 ## where we are (2026-11-08, ultracode continuation) — COMPLETE
 
 User request (this round): "organize files into folders; install script for

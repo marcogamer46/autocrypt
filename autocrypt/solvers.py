@@ -26,7 +26,7 @@ from autocrypt.core import solver
 from autocrypt.scoring import (assess, quadgram_score, quadgram_log, word_initial_log,
                      word_final_log, WORDS, _COMMON, flag_plausibility,
                      english_confidence, leet_body_dict_fraction, plain_text_score,
-                     dictionary_fraction, clear_english)
+                     dictionary_fraction, clear_english, _FLAGISH)
 
 try:  # optional acceleration/provider
     import gmpy2
@@ -631,6 +631,45 @@ def _top_texts(text, variants, count=3):
     return ranked[:count]
 
 
+# A larger general English vocabulary (repo-root wordlist) is used only to
+# recognize *flag-body* token coherence for Caesar-family cracks. It is a plain
+# dictionary, not answer-specific, so it adds no challenge knowledge. We prefer
+# it over the small _COMMON set when present, because short CTF flag bodies
+# (e.g. "et_tu_brute") frequently fall outside _COMMON.
+_WORDLIST_CACHE = None
+
+
+def _large_wordlist():
+    global _WORDLIST_CACHE
+    if _WORDLIST_CACHE is None:
+        p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "english_words.txt")
+        try:
+            with open(p, encoding="utf-8", errors="ignore") as _fh:
+                _WORDLIST_CACHE = {_ln.strip() for _ln in _fh if _ln.strip()}
+        except OSError:
+            _WORDLIST_CACHE = frozenset()  # fallback: branch simply never fires
+    return _WORDLIST_CACHE
+
+
+def _flag_body_coherence(text):
+    """Fraction of underscore-separated alphabetic {body} tokens that are real
+    dictionary words. Falls back to the leet-aware _COMMON fraction when the
+    large wordlist is unavailable."""
+    _m = _FLAGISH.search(text)
+    if not _m:
+        return 0.0
+    _inner = _m.group(0)[_m.group(0).index("{") + 1:-1]
+    _toks = [_t for _t in _inner.lower().split("_") if _t.isalpha()]
+    if not _toks:
+        return 0.0
+    _words = _large_wordlist()
+    if not _words:
+        return leet_body_dict_fraction(text)
+    _hits = sum(1 for _t in _toks if _t in _words)
+    return _hits / len(_toks)
+
+
 @solver("caesar", lambda fp: _text_prior(fp))
 def solve_caesar(data, ctx):
     try:
@@ -658,21 +697,26 @@ def solve_caesar(data, ctx):
                 claimed = .97 if pf > 0 else max(.6, min(.95, sc))
                 yield out, "caesar(hint)", {"shift": k, "_statistical": True}, claimed
                 return
-    # A shift that reveals a recognized flag wrapper with a plausible body is
-    # authoritative (mirrors ROT13/atbash): surface it as a confident crack.
-    # CTF flag bodies are often leet/random-looking, so they rank mid-list in
-    # the generic English ranking; the gained flag-shape evidence is decisive.
+    # A shift that reveals a flag-shaped wrapper whose body got *more* plausible
+    # than the input is authoritative (mirrors ROT13/atbash): surface it as a
+    # confident crack. CTF flag bodies are often leet/random-looking, so they
+    # rank mid-list in the generic English ranking; the gained flag-shape
+    # evidence is decisive. Works for any prefix (the prefix itself is often
+    # Caesar-encrypted too, so a known-prefix gate would miss it).
     _best_sh = None
     _best_gain = 0.0
+    _in_frac = _flag_body_coherence(text)
     for k in range(1, 26):
         out = _letter_shift(text, lambda x, k=k: x - k)
-        _sh = _hint_flag_only(out)
-        if _sh:
-            gain = leet_body_dict_fraction(_sh) - leet_body_dict_fraction(text)
-            if gain > _best_gain:
+        _ms = _FLAGISH.search(out)
+        if _ms:
+            _sh = _ms.group(0)
+            frac = _flag_body_coherence(_sh)
+            gain = frac - _in_frac
+            if frac >= 0.75 and gain > _best_gain:
                 _best_gain = gain
                 _best_sh = (_sh, k)
-    if _best_sh is not None and _best_gain > 0.03:
+    if _best_sh is not None and _best_gain > 0.05:
         _sh, k = _best_sh
         yield _sh, "cracked Caesar", {"shift": k, "_statistical": True}, 0.99
         return

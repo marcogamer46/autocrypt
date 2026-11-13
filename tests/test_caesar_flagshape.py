@@ -50,6 +50,20 @@ def test_caesar_flag_recovery():
         assert _recovers_flag(_rot(f, k).encode(), f), f"shift k={k} for {f}"
 
 
+def test_caesar_nonenglish_latin_body_recovers():
+    # A Caesar-encrypted flag whose body is a well-known Latin phrase
+    # ("et tu, Brute"): tokens are real words but fall outside the small
+    # _COMMON set, so recovery must use the fuller wordlist. The encrypted
+    # prefix is not a known flag prefix either, so the generic shell scan must
+    # surface it.
+    data = b"jzww{la_ab_iybal}"
+    fp, res, ctx = autocrypt.solve_data(
+        data, flag_format=r"\w{1,40}\{.*?\}", timeout=6.0)
+    assert res, "expected at least one candidate"
+    assert res[0]["plaintext"] == "cspp{et_tu_brute}", \
+        [r["plaintext"] for r in res[:5]]
+
+
 def test_caesar_english_still_works():
     # Classic English text must still recover (regression guard for the early
     # flag-return path).

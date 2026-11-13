@@ -968,3 +968,29 @@ Linux installers so `autocrypt` is a global command, and add
   1-byte `b"a"` fail input (verified undecodable, replay stable x3). Not a solver
   regression — predates this session.
 - Version bumped 0.11.6 -> 0.11.7.
+
+## Session: fix Caesar flag-shaped recovery (v0.11.8)
+
+- User: "the ceasar cpher cant solve this jzww{la_ab_iybal} please fix it and do
+  commit and push after u fix it".
+- Root cause 1: the 0.11.7 `cracked Caesar` branch referenced `_FLAGISH` without
+  importing it → `NameError` every time `solve_caesar` ran; the solver raised
+  silently (per-solver exceptions are swallowed), contributing no candidates, so
+  `as-is` sat on top at 0.96.
+- Root cause 2: even with the import fixed, the gain metric (`leet_body_dict_fraction`,
+  built on the small `_COMMON` set) scored the target body `et_tu_brute` 0.0 because
+  `et`/`tu`/`brute` are outside `_COMMON`.
+- Fix (`autocrypt/solvers.py`):
+  - `_large_wordlist()` lazily loads the repo-root `english_words.txt` (370k general
+    English words) into a cached set; falls back to `frozenset()` if missing.
+  - `_flag_body_coherence(text)` → fraction of `{body}` underscore-tokens that are
+    real dictionary words (falls back to `leet_body_dict_fraction` if the big list
+    is unavailable).
+  - The cracked-Caesar branch now uses `_flag_body_coherence`; fires when the best
+    shift's body fraction ≥ 0.75 and gains > 0.05 over the input, surfacing it at
+    0.99. `jzww{la_ab_iybal}` → `cspp{et_tu_brute}` (shift 7) now ranks #1 above
+    as-is.
+- Verification: `tests/test_caesar_flagshape.py` gains
+  `test_caesar_nonenglish_latin_body_recovers`; existing caesar + morse/binary suites
+  green; full suite green (see run in this session).
+- Version bumped 0.11.7 -> 0.11.8.

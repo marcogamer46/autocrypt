@@ -4,6 +4,20 @@ All notable changes to AutoCrypt are recorded here. Format: version → notable
 changes. See `PROGRESS.md` for detailed work logs and `LOGS.md` for the
 chronological session record.
 
+## 0.11.8 (unreleased) — fix Caesar flag-shaped recovery (full-wordlist body coherence)
+
+- Fixes the `cracked Caesar` branch introduced in 0.11.7: that version referenced
+  `_FLAGISH` without importing it, so the branch raised `NameError` and the whole
+  Caesar solver silently contributed no candidates (leave as-is masking the result).
+- The branch now scans all 25 shifts for one that reveals a flag-shaped output whose
+  `{body}` tokens are *real dictionary words* (a fuller built-in English wordlist,
+  not the small `_COMMON` set). This recovers encrypted bodies whose tokens fall
+  outside `_COMMON` — e.g. `jzww{la_ab_iybal}` → `cspp{et_tu_brute}` (shift 7/19,
+  "et tu, Brute"). Works for any encrypted prefix (no known-prefix gate). Conservative
+  guards (fraction ≥ 0.75 and gain over input) keep random shifts from firing.
+- Test: `tests/test_caesar_flagshape.py::test_caesar_nonenglish_latin_body_recovers`.
+  Full suite green.
+
 ## 0.11.7 (unreleased) — Caesar flag-shaped recovery
 
 - `solve_caesar` now scans all 25 shifts for one that reveals a recognized flag
