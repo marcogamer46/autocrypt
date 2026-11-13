@@ -948,3 +948,23 @@ Linux installers so `autocrypt` is a global command, and add
   (incl. `test_save_creates_parent_dirs`) green; `test_rsa_ui_phase7.py` green; full
   suite 51/51.
 - Version bumped 0.11.5 -> 0.11.6.
+
+## Session: Caesar flag-shaped recovery (v0.11.7)
+
+- User: "improve ceasar like u can get online for challenges". The all-25-shifts
+  English ranker existed, but flag-shaped bodies (leet/random-looking) ranked mid-
+  list and could be outranked by junk chains — the same artifact seen with morse.
+- `solve_caesar` now scans the 25 shifts for one whose output contains a recognized
+  flag wrapper (`flag{ctf{`icoCTF{htb{academy{...}`) whose leet/dictionary body
+  plausibility gains over the input, and surfaces the best-gain shift as a confident
+  `cracked Caesar` candidate. Mirrors the ROT13/atbash flag-surfacing pattern;
+  classic English Caesar recovery untouched.
+- Verification: `tests/test_caesar_flagshape.py` (flag recovery across academy/flag/
+  picoCTF/htb prefixes + English regression guard) green; golden vectors 21/21 and
+  rot13/base36-caesar/flagshape suites green.
+- Also fixed a pre-existing flaky test: `test_failures.py` seeded `fail_input =
+  os.urandom(80)`; random bytes occasionally decoded, flipping the expected `[FAIL]`
+  into `[PASS]` and failing the suite intermittently. Replaced with a deterministic
+  1-byte `b"a"` fail input (verified undecodable, replay stable x3). Not a solver
+  regression — predates this session.
+- Version bumped 0.11.6 -> 0.11.7.

@@ -4,6 +4,18 @@ All notable changes to AutoCrypt are recorded here. Format: version → notable
 changes. See `PROGRESS.md` for detailed work logs and `LOGS.md` for the
 chronological session record.
 
+## 0.11.7 (unreleased) — Caesar flag-shaped recovery
+
+- `solve_caesar` now scans all 25 shifts for one that reveals a recognized flag
+  wrapper (`flag{…}`, `ctf{…}`, `picoCTF{…}`, `htb{…}`, `academy{…}`, …) whose
+  leet/`-body plausibility *gains* over the input, and surfaces that as a
+  confident `cracked Caesar` candidate (choosing the max-gain shift). CTF flag
+  bodies are often leet/random-looking and therefore ranked mid-list by generic
+  English scoring; the gained flag-shape evidence is decisive. Classic English
+  Caesar recovery is unchanged.
+- Tests: `tests/test_caesar_flagshape.py` (flag recovery across prefixes +
+  English regression guard). Full suite green.
+
 ## 0.11.6 (unreleased) — morse punctuation/leniency + binary padded tokens + save fix
 
 - **Morse**: added common punctuation to the table (`. , ? ' ! / ( ) & : ; = + - _ " $ @`);

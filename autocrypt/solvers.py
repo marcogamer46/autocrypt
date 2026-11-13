@@ -658,6 +658,24 @@ def solve_caesar(data, ctx):
                 claimed = .97 if pf > 0 else max(.6, min(.95, sc))
                 yield out, "caesar(hint)", {"shift": k, "_statistical": True}, claimed
                 return
+    # A shift that reveals a recognized flag wrapper with a plausible body is
+    # authoritative (mirrors ROT13/atbash): surface it as a confident crack.
+    # CTF flag bodies are often leet/random-looking, so they rank mid-list in
+    # the generic English ranking; the gained flag-shape evidence is decisive.
+    _best_sh = None
+    _best_gain = 0.0
+    for k in range(1, 26):
+        out = _letter_shift(text, lambda x, k=k: x - k)
+        _sh = _hint_flag_only(out)
+        if _sh:
+            gain = leet_body_dict_fraction(_sh) - leet_body_dict_fraction(text)
+            if gain > _best_gain:
+                _best_gain = gain
+                _best_sh = (_sh, k)
+    if _best_sh is not None and _best_gain > 0.03:
+        _sh, k = _best_sh
+        yield _sh, "cracked Caesar", {"shift": k, "_statistical": True}, 0.99
+        return
     variants = [(_letter_shift(text, lambda x, k=k: x - k), "caesar", {"shift": k})
                 for k in range(1, 26)]
     if len(text) <= 200 and (any(not c.isalpha() for c in text) or any(c.islower() for c in text)):

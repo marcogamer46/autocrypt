@@ -1043,3 +1043,20 @@ Verification: `tests/test_morse_binary.py` (solver-level unit checks + the exact
 UI morse input, which recovers `DOTSANDDASHES` end-to-end) green; `test_ui_safety.py`
 (including `test_save_creates_parent_dirs`) green; `test_rsa_ui_phase7.py` green; full
 suite (see LOGS for the run).
+
+## 0.11.7 — Caesar flag-shaped recovery
+
+Task: "improve ceasar like u can get online for challenges". The all-25-shifts
+English ranker already existed, but flag-shaped bodies (leet/random-looking) ranked
+mid-list and could be outranked by junk chains — the same artifact seen with morse.
+
+Implemented (`autocrypt/solvers.py` solve_caesar):
+- Before the generic ranking, scan all 25 shifts for one whose output contains a
+  recognized flag wrapper (`flag{ctf{`icoCTF{htb{academy{...}`) whose leet/dictionary
+  body plausibility *gains* over the input. Surface the best-gain shift as a confident
+  `cracked Caesar` candidate (confidence 0.99). Mirrors the existing ROT13/atbash
+  flag-surfacing pattern; classic English Caesar recovery is untouched.
+
+Verification: `tests/test_caesar_flagshape.py` (flag recovery across academy/flag/
+picoCTF/htb prefixes + an English regression guard) green; golden vectors 21/21,
+rot13 academy, base36-caesar, flagshape suites green; full suite (see LOGS).

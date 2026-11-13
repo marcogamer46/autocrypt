@@ -111,8 +111,12 @@ def test_solve_data_logs_on_failure_only():
 def test_replay_reports_passes_and_fails():
     from autocrypt.failures import DEFAULT_FILE
     # Seed a log: one input that will now pass (as-is flag), one that won't.
+    # fail_input is a deterministic 1-byte string: it is undecodable (no
+    # solver path for a lone 'a'), so replay reliably reports it as [FAIL].
+    # (Random bytes were flaky here — occasionally they decode and flip the
+    # expected [FAIL] into a [PASS].)
     pass_input = b"academy{replay_now_passes}"
-    fail_input = os.urandom(80)
+    fail_input = b"a"
     with tempfile.TemporaryDirectory() as td:
         path = Path(td) / "failures.jsonl"
         with open(path, "w", encoding="utf-8") as fh:
