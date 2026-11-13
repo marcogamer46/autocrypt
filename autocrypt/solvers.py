@@ -2915,7 +2915,9 @@ def _rsa_values(data, ctx):
     # Unlabeled fallback: exactly three large integers in the file, no
     # n/e/c labels found, in "n e c" order. Guarded to avoid hijacking
     # other 3-number formats (e.g. DLP/LGG triples): n > c, e >= 2.
-    if not (normalized.get("n") and normalized.get("e") and normalized.get("c") is not None):
+    # Only used when labels did NOT already provide n or c (otherwise a
+    # labeled "n,c,d" triple would be misread as "n,e,c").
+    if not (normalized.get("n") or normalized.get("c")):
         try:
             text = data.decode("ascii", "ignore")
             nums = [int(x) for x in re.findall(r"\b\d+\b", text)]
@@ -3329,8 +3331,77 @@ def solve_rsa(data, ctx):
         except (TypeError, ValueError):
             pass
     # Tiny RSA-like assignments frequently appear by chance in arbitrary bytes.
-    if not ctx.rsa_params and n is not None and n < 256:
+    # Only the very smallest values are filtered (genuine tiny-RSA textbook
+    # challenges still pass); the params/UI path is never blocked by this.
+    if not ctx.rsa_params and n is not None and n < 32:
         return
+    # Block RSA: the ciphertext is a *list* of independently encrypted values,
+    # all sharing the same n/e (e.g. one value per plaintext byte/block). The
+    # text contains many numbers, each < n; factor once and decrypt every block.
+    if n and n > 1 and (e or vals.get("d")):
+        try:
+            _text = data.decode("ascii", "ignore")
+        except Exception:
+            _text = ""
+        if _text:
+            try:
+                _nums = [int(x) for x in re.findall(r"\b\d+\b", _text)]
+            except Exception:
+                _nums = []
+            # Reserve the known parameter values so they are never misread as
+            # ciphertext blocks (e.g. when p/q/d are supplied alongside n/e).
+            _reserved = {v for v in (n, e, vals.get("c"), vals.get("p"),
+                                     vals.get("q"), vals.get("d"))
+                         if isinstance(v, int)}
+            _blocks = [x for x in _nums if x not in _reserved]
+            if len(_blocks) >= 3 and all(0 < x < n for x in _blocks):
+                _d_b = vals.get("d")
+                _p_b, _q_b = vals.get("p"), vals.get("q")
+                try:
+                    if _d_b is None and _p_b and _q_b and int(_p_b) * int(_q_b) == n:
+                        _d_b = _inv(e, (int(_p_b) - 1) * (int(_q_b) - 1))
+                    elif _d_b is None:
+                        _f = _factor(n, ctx)
+                        if _f:
+                            _pp, _qq = _f
+                            _d_b = _inv(e, (_pp - 1) * (_qq - 1))
+                    if _d_b is not None and (_d_b := int(_d_b)) > 0:
+                        _ms = [pow(x, _d_b, n) for x in _blocks]
+                        # When e is available, verify every block (m^e == c) so a
+                        # wrong supplied d never yields a confident garbage result.
+                        if e and e > 1 and any(
+                                pow(m, e, n) != blk
+                                for m, blk in zip(_ms, _blocks)):
+                            _ms = []
+                        _out = b"".join(_int_plain(m) for m in _ms)
+                        if _out:
+                            yield from _emit(
+                                ctx, _out, "RSA block",
+                                {"n": n, "e": e, "blocks": len(_blocks),
+                                 "d": _d_b})
+                            return
+                except (TypeError, ValueError):
+                    pass
+    # Pure private-exponent decode: a supplied d is mathematically sufficient on
+    # its own (m = c^d mod n); e is only needed to *verify* the result. This
+    # must work even when no public exponent was provided. A wrong d is rejected
+    # (or just not verified to be correct) and never swallows the crack paths.
+    _d_given = vals.get("d")
+    if c is not None and n and n > 1 and _d_given is not None:
+        try:
+            _dd = int(_d_given)
+        except (TypeError, ValueError):
+            _dd = -1
+        if _dd > 0 and 0 <= c < n:
+            _m = pow(c, _dd, n)
+            _ok = True
+            if e and e > 1:
+                _ok = pow(_m, e, n) == c
+            if _ok:
+                yield from _emit_rsa(
+                    ctx, _m, "RSA known-d",
+                    {"n": n, "e": e, "c": c, "d": _dd, "m": _m})
+                return
     if n and e and c is not None and n > 1 and e > 0:
         # e=1 is the identity encryption: c == m mod n, so the plaintext is c
         # itself (when c < n). Decisive; report it and stop.
@@ -3387,19 +3458,7 @@ def solve_rsa(data, ctx):
                         return
             except (TypeError, ValueError):
                 pass
-        # A supplied private exponent decrypts directly — no factoring needed.
-        # (Works whether d is ed ≡ 1 mod φ(n) or mod λ(n).)
-        _d_given = vals.get("d")
-        if _d_given is not None:
-            try:
-                _dd = int(_d_given)
-                _m = pow(c, _dd, n)
-                yield from _emit_rsa(
-                    ctx, _m, "RSA known-d",
-                    {"n": n, "e": e, "c": c, "d": _dd, "m": _m})
-                return
-            except (TypeError, ValueError):
-                pass
+        # (known-d decryption is handled above, independent of the e-gate.)
         # Small exponent: recover via an exact integer root. Earlier this only
         # ran when c < n, but some challenges publish an *unreduced* m^e (a
         # perfect e-th power) that exceeds n (e.g. picoCTF-style "e should be

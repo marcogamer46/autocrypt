@@ -508,26 +508,120 @@ def _rsa_num(prompt, required):
             print(paint(f"Not a valid number: {v}", "red"))
 
 
+_RSA_KEY_ALIASES = {
+    "modulus": "n", "exponent": "e",
+    "cyphertext": "c", "ciphertext": "c", "cypher": "c", "cipher": "c",
+    "encrypted": "c", "message": "c", "msg": "c", "ct": "c", "enc": "c",
+    "priv": "d", "private": "d", "private_exponent": "d",
+}
+
+
+def _rsa_value_to_decimal(v):
+    """Validate/normalize one RSA value as a decimal string (auto-detects hex:
+    0x prefix or any [a-f] digit implies hex). Returns '' when unusable."""
+    v = v.strip().replace(" ", "").replace("_", "")
+    if not v:
+        return ""
+    try:
+        if v.lower().startswith("0x"):
+            return str(int(v, 16))
+        if any(c in "abcdefABCDEF" for c in v) and all(
+                c in "0123456789abcdefABCDEF" for c in v):
+            return str(int(v, 16))
+        int(v, 10)
+        return v
+    except ValueError:
+        return ""
+
+
+def _parse_rsa_spec(text):
+    """Parse n/e/c/p/q/d key=value pairs from multi-line / comma / semicolon
+    text (labels may be separated by '=' or ':'; keys are case-insensitive and
+    common aliases like modulus/exponent/ciphertext/priv are accepted).
+    Returns (fields, unrecognized): fields maps each key to its decimal-string
+    value; unrecognized lists the lines that could not be parsed."""
+    fields = {}
+    unknown = []
+    for raw in re.split(r"[\n,;]+", text):
+        line = raw.strip()
+        if not line:
+            continue
+        m = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\s*[:=]\s*(.+)", line)
+        if not m:
+            unknown.append(line)
+            continue
+        key = m.group(1).lower()
+        k = _RSA_KEY_ALIASES.get(key, key)
+        if k in ("n", "e", "c", "p", "q", "d"):
+            dv = _rsa_value_to_decimal(m.group(2))
+            if dv:
+                fields[k] = dv
+            else:
+                unknown.append(line)
+        else:
+            unknown.append(line)
+    return fields, unknown
+
+
 def _rsa_input():
-    """Phase 7 RSA UI mode: n/e/c (required), optional p/q/d. Returns the
-    params spec string and its byte form for the solve pipeline."""
-    first = input("Paste n=..., e=..., c=... (or enter n): ").strip()
-    if not first:
-        return "", b""
-    if "=" in first:
-        return first, first.encode()
-    n = _rsa_num("n: ", True)
-    e = _rsa_num("e: ", True)
-    c = _rsa_num("c: ", True)
-    spec = f"n={n},e={e},c={c}"
-    # Optional private-key / CRT parts (auto-detected hex, blank to skip).
-    p = _rsa_num("p: (blank to skip) ", False)
-    q = _rsa_num("q: (blank to skip) ", False)
-    if p and q:
-        spec += f",p={p},q={q}"
-    d = _rsa_num("d: (blank to skip) ", False)
-    if d:
-        spec += f",d={d}"
+    """Phase 7 RSA mode: paste a labeled spec (multi-line or comma-separated:
+    n=..., e=..., c=..., optional p=..., q=..., d=...). Missing required fields
+    are prompted for individually; hex is auto-detected. Returns (spec, data)
+    where data == spec.encode(), or (None, None) on an empty input (cancel)."""
+    print(paint(
+        "RSA mode — paste parameters as n=..., e=..., c=... lines "
+        "(optional p=..., q=..., d=...). Finish with a blank line.", "dim"))
+    lines = []
+    while True:
+        try:
+            line = input()
+        except EOFError:
+            break
+        if not line.strip():
+            break
+        lines.append(line)
+    text = "\n".join(lines)
+    if not text.strip():
+        print(paint("No input; returning to the menu.", "yellow"))
+        return None, None
+    fields, unknown = _parse_rsa_spec(text)
+    for u in unknown:
+        print(paint(f"Unrecognized/unusable line (skipped): {u!r}", "red"))
+
+    # Required: n and c; and at least one of e or d.
+    if "n" not in fields:
+        v = _rsa_num("n: ", True)
+        if v:
+            fields["n"] = v
+    if "c" not in fields:
+        v = _rsa_num("c: ", True)
+        if v:
+            fields["c"] = v
+    if "e" not in fields and "d" not in fields:
+        v = _rsa_num("e: (or provide d) ", False)
+        if v:
+            fields["e"] = v
+        elif "d" not in fields:
+            print(paint("Need either e or d to decrypt.", "red"))
+            return None, None
+
+    # Optional p/q/d — only prompt for ones not already pasted.
+    if "p" not in fields:
+        v = _rsa_num("p: (blank to skip) ", False)
+        if v:
+            fields["p"] = v
+    if "q" not in fields:
+        v = _rsa_num("q: (blank to skip) ", False)
+        if v:
+            fields["q"] = v
+    if "d" not in fields:
+        v = _rsa_num("d: (blank to skip) ", False)
+        if v:
+            fields["d"] = v
+
+    echo = [f"{k}=<{len(fields[k])} digits>" for k in ("n", "e", "c", "p", "q", "d") if k in fields]
+    print(paint("Parsed RSA parameters: " + ", ".join(echo), "green"))
+    spec = ",".join(f"{k}={fields[k]}" for k in ("n", "e", "c", "p", "q", "d") if k in fields)
     return spec, spec.encode()
 
 def _post_solve(results, settings):
@@ -566,7 +660,7 @@ def interactive():
     _tab_completion()
     while True:
         print(box("Main menu", [
-            "1. Paste ciphertext", "2. Load from file", "3. Enter RSA parameters",
+            "1. Paste ciphertext", "2. Load from file", "3. RSA mode (paste n,e,c)",
             "4. Settings", "5. Help", "6. Quit"]))
         try:
             choice = input("Select 1–6 (or a letter): ").strip().lower()
@@ -607,6 +701,8 @@ def interactive():
                     print(paint("Challenge: " + n, "yellow"))
             elif choice in ("3", "r"):
                 params, data = _rsa_input()
+                if data is None:
+                    continue
             elif choice in ("4", "s"):
                 if not _settings(settings):
                     return 0

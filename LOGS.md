@@ -905,3 +905,23 @@ Linux installers so `autocrypt` is a global command, and add
   `tests/test_rsa_ui_phase7.py` (5 checks) passes, including an end-to-end CLI
   parse of the spec on stdin recovering `academy{rsa_known_d_ok}`.
 - Version bumped 0.11.3 -> 0.11.4.
+
+## Session: RSA mode UX + block-RSA + d-only decrypt (v0.11.5)
+
+- User reported the UI still read "3. Enter RSA parameters" ("still the same,
+  no rsa mode") and that it couldn't solve a per-block RSA challenge. A three-
+  agent analysis workflow (UI/solver/tests) produced 30 findings; implemented
+  the high-value ones:
+  - Menu renamed to `RSA mode (paste n,e,c)`; `_rsa_input()` now accepts multi-
+    line/comma/semicolon labeled paste (aliases, hex auto-detect incl. 0X),
+    prompts for missing required fields, echoes parsed fields, cancels cleanly.
+  - Solved `CYBERCONNECT{small_modulus_small_problem}`: 41 per-character RSA
+    blocks sharing n=1260503/e=65537. Added a `RSA block` solver (factor once,
+    decrypt every block, verify against e). Known n/e/p/q/d values are excluded
+    from block detection.
+  - Hoisted `RSA known-d` outside the e-gate so `n,c,d` alone decrypt; verify
+    `pow(m,e,n)==c` when e is present (wrong d never emits garbage, never blocks
+    cracking). Unlabeled fallback no longer misreads a labeled n,c,d triple as
+    n,e,c; tiny-modulus guard relaxed to n<32.
+  - Tests expanded to 14 checks in `test_rsa_ui_phase7.py`; full suite green.
+- Version bumped 0.11.4 -> 0.11.5.

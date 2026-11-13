@@ -4,6 +4,29 @@ All notable changes to AutoCrypt are recorded here. Format: version → notable
 changes. See `PROGRESS.md` for detailed work logs and `LOGS.md` for the
 chronological session record.
 
+## 0.11.5 (unreleased) — RSA mode UX + block-RSA + d-only decryption
+
+- **RSA mode** (was "Enter RSA parameters"): the menu entry is now
+  `3. RSA mode (paste n,e,c)`, and pasting accepts multi-line / comma- /
+  semicolon-separated labeled fields (`n=…`, `e=…`, `c=…`, optional `p=…`,
+  `q=…`, `d=…`; `=` or `:` separators; case-insensitive keys with aliases like
+  `modulus`/`exponent`/`ciphertext`/`priv`; hex auto-detected, incl. `0X`).
+  Missing required fields are prompted for individually, and the parsed fields
+  are echoed before solving. Empty input cancels cleanly back to the menu.
+- **d-only decryption**: a supplied private exponent `d` now decrypts without
+  needing `e` (`m = c^d mod n`); when `e` is present the result is verified via
+  `pow(m, e, n) == c`, so a wrong `d` is never emitted as a confident result
+  and never blocks the factoring/crack paths.
+- **Block RSA**: a ciphertext that is a *list* of values all sharing `n`/`e`
+  (e.g. one per plaintext byte) is now recovered — factor once, decrypt every
+  block (`RSA block`). Known parameter values are excluded so supplied `p/q/d`
+  are never misread as blocks.
+- Unlabeled numeric fallback no longer misreads a labeled `n,c,d` triple as
+  `n,e,c`; tiny-modulus guard relaxed (n < 32) so genuine tiny-RSA passes.
+- Tests: `tests/test_rsa_ui_phase7.py` expanded to 14 checks (d-only, p/q
+  path, multiline/uppercase parse, hex autodetect, missing-required, wrong-d
+  safety, block-RSA, plaintext == pow(c,d,n)).
+
 ## 0.11.4 (unreleased) — Phase 7: RSA UI mode with optional private exponent
 
 - **RSA UI mode** (`Enter RSA parameters`): accepts `n`/`e`/`c` (required) and

@@ -977,4 +977,47 @@ Decisions:
   p/q and d gets the p/q verification; d is the fallback that avoids factoring.
 
 Verification: `test_rsa_ui_phase7.py` passes; full suite clean.
+
+## Phase 7b — RSA mode UX, d-only decrypt, block-RSA (v0.11.5)
+
+Goal: address the user report that the RSA option did not feel like a "mode"
+and could not solve a per-block RSA challenge (`CYBERCONNECT{small_modulus_
+small_problem}`), plus close the gap findings from a three-agent review
+workflow (UI / solver / tests).
+
+Done:
+- `autocrypt/ui.py`:
+  - Menu entry renamed `3. RSA mode (paste n,e,c)`; `_rsa_input()` rewritten to
+    read a multi-line paste until a blank line, parse `key=value` / `key: value`
+    (case-insensitive, aliases modulus/exponent/ciphertext/priv, hex auto-detect
+    incl. `0X`), prompt for missing required fields, echo the parsed set, and
+    cancel cleanly on empty input (`interactive()` handles a `None` cancel).
+- `autocrypt/solvers.py`:
+  - Hoisted `RSA known-d` out of the `e`-gate: `n,c,d` alone decrypt via
+    `m = c^d mod n`; when `e` is present the result is verified with
+    `pow(m, e, n) == c` so a wrong `d` yields nothing and the crack paths still
+    run. Added `0 <= c < n` and `d > 0` guards.
+  - New `RSA block` solver: if the text contains many numbers (>= 3, each < n)
+    beyond the known parameter values, factor once (or use p/q/d) and decrypt
+    every block, verifying each against `e` when available.
+  - Unlabeled 3-number fallback no longer fires when labels already gave `n`/`c`
+    (fixes a labeled `n,c,d` triple being misread as `n,e,c`). Tiny-modulus
+    guard relaxed to `n < 32` so genuine tiny-RSA challenges pass on the paste
+    path.
+- Tests: `tests/test_rsa_ui_phase7.py` expanded to 14 checks (d-only without e,
+  p/q-derived d, uppercase/multiline parse, hex autodetect, single-line full
+  spec, missing-required no-crash, wrong-d safety, block-RSA challenge,
+  plaintext == pow(c,d,n), CLI end-to-end).
+
+Decisions:
+- A user-supplied `d` is decisive but not blind: with `e` present the solver
+  verifies `pow(m, e, n) == c` and refuses to emit a garbage candidate on a
+  typo'd key. Without `e`, the plain text is trusted (that is the whole point
+  of supplying a private exponent).
+- Block-RSA detection requires >= 3 blocks each < n and excludes the n/e/p/q/d
+  parameter values, keeping it from hijacking single-message or multi-prime
+  label formats.
+
+Verification: `test_rsa_ui_phase7.py` (14 checks) pass; CYBERCONNECT block-RSA
+solved; full suite clean.
 gzip/zlib/bzip2 decompression sanity-checked. Next: Phase 7 (RSA UI mode).

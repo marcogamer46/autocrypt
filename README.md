@@ -270,6 +270,7 @@ autocrypt --timeout 60 --deep stubborn_input.txt
 autocrypt --failures /tmp/failures.jsonl mystery.bin
 autocrypt --replay --failures /tmp/failures.jsonl   # which failures now decode?
 autocrypt --key lemon cipher.txt                       # decrypt with known key
+autocrypt rsablocks.txt      # RSA: list of ciphertext values + n=/e= lines
 ```
 
 When an input cannot be decoded, autocrypt appends one JSON line to
@@ -325,7 +326,8 @@ only in the source. Real curated challenges live under `real_challenges/` (see
 - XOR: single-byte, repeating-key (key lengths 2–5 with flag-shape constrained
   joint enumeration, work-budgeted), many-time-pad, known-plaintext crib.
 - Number theory / public-key: small-e exact root, Wiener, factored RSA (incl.
-  p/q-labeled input), shared-prime gcd, dp/dq leak, known p+q, even-e roots,
+  p/q-labeled input), known-d / p/q direct decrypt, block RSA (per-value list
+  sharing one n/e), shared-prime gcd, dp/dq leak, known p+q, even-e roots,
   multi-prime, Franklin-Reiter (m2 = a·m + b), common modulus, Hastad-style C
   (triple labels), Pollard p−1/p+1/rho/ECM factoring, DLP via Pohlig-Hellman
   for smooth groups, EC arithmetic + BSGS, ECDSA/DSA nonce reuse, LCG recovery,
