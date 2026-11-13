@@ -881,4 +881,30 @@ Decisions:
 
 Verification: full suite 47/47 (incl. `test_vigenere_crack.py`).
 
-Known issues: none known. Next: Phase 5 (UI input modes: paste ciphertext + key).
+Known issues: none known.
+
+## Phase 5 — UI input modes: paste ciphertext + key (v0.11.2)
+
+Goal: let the interactive UI take an optional cipher key alongside pasted
+ciphertext and route it to the decoders; blank key = auto-crack.
+
+Done:
+- `autocrypt/ui.py`:
+  - `settings["key"]` (default ""). The paste flow ("1. Paste ciphertext")
+    prompts "Optional cipher key (blank = auto-crack)" and stores a non-blank
+    answer; the value persists in Settings until changed.
+  - Settings menu gained "6. Cipher key" to view/clear the key.
+  - `_solve()` passes `key=settings.get("key", "")` into
+    `autocrypt.solve_data(...)`.
+- Tests: `tests/test_ui_phase5.py` (3 checks): key forwarded to `solve_data`,
+  blank key forwarded as "" (auto-crack), and Settings stores a key.
+
+Decisions:
+- The key is a persistent setting (not per-paste only) so it can be set once
+  and reused, and cleared from Settings when no longer wanted.
+- No new CLI flag: `--key` already exists from Phase 4; this phase only wires
+  the interactive path to it.
+
+Verification: `test_ui_phase5.py` + `test_ui_safety.py` + `test_beam.py` +
+`test_vigenere_crack.py` all pass. Next: Phase 6 (extras: XOR/hex/binary +
+  more CyberChef-style decoders + no throttling).

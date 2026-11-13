@@ -191,6 +191,7 @@ def _settings(settings):
             f"3. Top-N: {settings['top']}",
             f"4. Known-plaintext crib: {settings['known_plaintext'] or '(none)'}",
             f"5. Wordlist: {settings['wordlist'] or '(none)'}",
+            f"6. Cipher key: {settings['key'] or '(blank = auto-crack)'}",
             "0. Back",
         ]))
         try:
@@ -222,8 +223,10 @@ def _settings(settings):
                 settings["known_plaintext"] = input("Known plaintext (empty clears): ")
             elif choice in ("5", "w"):
                 settings["wordlist"] = input("Wordlist path (empty clears): ").strip()
+            elif choice in ("6", "key"):
+                settings["key"] = input("Cipher key (empty clears): ").strip()
             else:
-                print(paint("Choose 0–5.", "yellow"))
+                print(paint("Choose 0–6.", "yellow"))
         except (ValueError, EOFError) as exc:
             if isinstance(exc, EOFError): return False
             print(paint(f"Invalid value: {exc}", "red"))
@@ -432,6 +435,7 @@ def _solve(data, settings, params=""):
             top=settings["top"], known_plaintext=settings["known_plaintext"],
             wordlist_path=settings["wordlist"], params=params,
             progress_callback=progress, flag_format_explicit=settings["flag_format_explicit"],
+            key=settings.get("key", ""),
         )
     finally:
         if thread:
@@ -507,7 +511,7 @@ def interactive():
         except (ImportError, AttributeError):
             pass
     settings = {"flag_format": r"\w{1,40}\{.*?\}", "flag_format_explicit": False, "timeout": 20.0,
-                "top": 5, "known_plaintext": "", "wordlist": ""}
+                "top": 5, "known_plaintext": "", "wordlist": "", "key": ""}
     last = {}
     print(banner())
     _tab_completion()
@@ -531,6 +535,14 @@ def interactive():
             params = ""
             if choice in ("1", "p"):
                 data = _paste()
+                # Phase 5: optional cipher key (blank = auto-crack). Persists in
+                # settings until changed, so it can also be set via the menu.
+                try:
+                    key_in = input("Optional cipher key (blank = auto-crack): ").strip()
+                    if key_in:
+                        settings["key"] = key_in
+                except EOFError:
+                    pass
                 last.update(notes=[], source="")
             elif choice in ("2", "f"):
                 import shlex

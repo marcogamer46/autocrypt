@@ -88,8 +88,11 @@ python3 tests/test_matrix.py --both # exhaustive matrix checks
 
 > **Interactive UI.** With no file arguments and a terminal attached (a TTY),
 > a bare `autocrypt` launches an interactive session: paste or type the data
-> you want analyzed, and pick from the ranked recovery chains it finds. This
-> is the same `autocrypt` command as everything above — just omit the file.
+> you want analyzed, and pick from the ranked recovery chains it finds. When
+> pasting ciphertext you can also supply an optional cipher key (blank = auto-
+> crack); the key is passed to the decoders (e.g. Vigenère) and can be seen or
+> cleared under **Settings → Cipher key**. This is the same `autocrypt`
+> command as everything above — just omit the file.
 
 ### Installation
 

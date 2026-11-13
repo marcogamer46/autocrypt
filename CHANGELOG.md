@@ -4,6 +4,15 @@ All notable changes to AutoCrypt are recorded here. Format: version → notable
 changes. See `PROGRESS.md` for detailed work logs and `LOGS.md` for the
 chronological session record.
 
+## 0.11.2 (unreleased) — Phase 5: UI input modes (paste ciphertext + key)
+
+- Interactive UI: pasting ciphertext now prompts for an optional cipher key
+  (blank = auto-crack); the key is passed through to the decoders
+  (`solve_data(key=...)`), and is visible/editable as a new Settings entry
+  ("Cipher key"). A blank key keeps the automatic crack path.
+- Tests: `tests/test_ui_phase5.py` (key forwarding, blank-key default, Settings
+  store). No new CLI flags — the CLI already accepts `--key` (Phase 4).
+
 ## 0.11.1 (unreleased) — Phase 3: layered beam search; Phase 4: Vigenère + user key
 
 - **Layered beam search** (`--beam-width`, default 64): per-node child-width
