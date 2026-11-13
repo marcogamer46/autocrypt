@@ -993,6 +993,41 @@ def solve_vigenere(data, ctx):
                     claimed = .97 if flag_plausibility(plain) > 0 else max(.6, min(.95, sc))
                     yield plain, "vigenere(hint)", {"key": _word.upper(), "_statistical": True}, claimed
                     return
+    # Phase 4: user-supplied key (--key). Decrypt directly; a leading label
+    # prefix ("ct = ") may precede the real ciphertext, so scan small offsets.
+    if getattr(ctx, "key", ""):
+        w = ctx.key.strip().lower()
+        if 2 <= len(w) <= 32 and w.isalpha():
+            ks = [ord(c) - 97 for c in w]
+            best = None
+            for s in range(0, min(8, len(text))):
+                j, out = 0, []
+                for c in text:
+                    if c.lower() in string.ascii_lowercase:
+                        if j < s:
+                            out.append(c); j += 1; continue
+                        k = ks[(j - s) % len(ks)]
+                        x = ord(c.lower()) - 97
+                        out.append(chr((x - k) % 26 + (65 if c.isupper() else 97)))
+                        j += 1
+                    else:
+                        out.append(c)
+                plain = "".join(out)
+                sc, pf = _rank_score(plain), flag_plausibility(plain)
+                if best is None or max(sc, pf) > best[0]:
+                    best = (max(sc, pf), plain)
+            if best and best[1]:
+                sc, plain = best
+                fo = _hint_flag_only(plain)
+                if fo:
+                    yield fo, "vigenere(key)", {"key": w.upper()}, .99
+                    return
+                if pf > 0 or sc >= .55:
+                    claimed = .97 if pf > 0 else max(.6, min(.95, sc))
+                    yield plain, "vigenere(key)", {"key": w.upper()}, claimed
+                    return
+                yield plain, "vigenere(key)", {"key": w.upper()}, max(.5, sc)
+                return
     letters = [c.lower() for c in text if c.isalpha() and c.lower() in string.ascii_lowercase]
     if len(letters) < 8:
         return

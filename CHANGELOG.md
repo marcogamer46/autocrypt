@@ -4,6 +4,20 @@ All notable changes to AutoCrypt are recorded here. Format: version → notable
 changes. See `PROGRESS.md` for detailed work logs and `LOGS.md` for the
 chronological session record.
 
+## 0.11.1 (unreleased) — Phase 3: layered beam search; Phase 4: Vigenère + user key
+
+- **Layered beam search** (`--beam-width`, default 64): per-node child-width
+  cap, a cheap-transforms pass (reverse / swap-case / strip-whitespace, kept
+  only when it reveals a flag or gains English), and shared visited-string
+  de-dup across all expansions. Profiling counters (`nodes_expanded`,
+  `children_pushed`, `transforms_run`, `per_depth`) are surfaced in
+  `--verbose` and JSON `search_stats`. Note: the roadmap's "width 3" default
+  prunes deep classical stacking (vig→affine→caesar), so the default is 64.
+- **Vigenère user key** (`--key`): pass a known cipher key to decrypt Vigenère
+  directly (`vigenere(key)` recovery) instead of only cracking statistically;
+  blank keeps the Kasiski/IoC + per-column Caesar auto-crack.
+- Tests: `tests/test_beam.py`, `tests/test_vigenere_crack.py`.
+
 ## 0.11.0 (unreleased) — Phase 2: unified scoring
 
 - New `autocrypt.scoring.score()`: one 0..1 plaintext-likeness score blending

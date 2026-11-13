@@ -125,6 +125,9 @@ class Context:
     solver_times: dict = field(default_factory=dict)
     speed: float = 1.0      # <1 for --fast (shorter per-solver slices), >1 for --deep
     heavy_names: frozenset = frozenset()  # solver names to skip under --fast
+    beam_width: int = 64    # Phase 3: max children expanded per node (beam)
+    stats: dict = field(default_factory=dict)  # Phase 3 profiling counters
+    key: str = ""           # Phase 4: optional user-supplied cipher key
 
     def expired(self) -> bool:
         return time.monotonic() >= self.deadline
@@ -592,6 +595,13 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
     visited = {hashlib.sha256(data).digest()}
     results: dict[bytes, dict] = {}
     ctx.failures.clear()
+    # Phase 3 profiling counters + beam width.
+    stats = ctx.stats
+    stats.setdefault("nodes_expanded", 0)
+    stats.setdefault("children_pushed", 0)
+    stats.setdefault("per_depth", {})
+    stats.setdefault("transforms_run", 0)
+    beam = max(1, int(getattr(ctx, "beam_width", 3)))
     try:
         id_text = data.decode("utf-8", "replace")
         id_match = ctx.flag_regex.search(id_text) if len(data) <= 100_000 else None
@@ -639,6 +649,25 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
         if depth >= max_depth:
             continue
         ctx.depth = depth
+        stats["nodes_expanded"] += 1
+        # Phase 3 beam: collect this node's candidate children, keep only the
+        # `beam` highest-priority ones, and push them after all solvers for the
+        # node have run (flush_children below).
+        pending: list[tuple] = []
+
+        def remember_child(prio, b, fc, dp):
+            nonlocal serial
+            heapq.heappush(pending, (prio, serial, b, fc, prio, dp))
+            serial += 1
+            if len(pending) > beam:
+                heapq.heappop(pending)
+
+        def flush_children():
+            for cand in pending:
+                p, s, b, fc, pr, dp = cand
+                heapq.heappush(heap, (-pr, s, b, fc, pr, dp))
+                stats["children_pushed"] += 1
+            pending.clear()
         fix = _free_fixpoint(blob)
         if fix and not ctx.exact_found:
             newdata, names = fix
@@ -664,6 +693,62 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
         fingerprints_as_encoding = bool(
             fp["magic"] or encoding_classes.intersection(fp["classes"])
         )
+        # Phase 3: cheap reversible transforms (reverse, swap-case, whitespace-
+        # strip) tried on printable-text nodes. They are recorded as first-class
+        # candidates only when they newly reveal a flag shape or clearly improve
+        # English, and are also offered as expansion children so downstream
+        # solvers see the transformed text.
+        if not ctx.exact_found:
+            try:
+                _txt = blob.decode("utf-8", "replace")
+            except Exception:
+                _txt = ""
+            if _txt and _txt != "":
+                _transforms = (
+                    ("reverse", lambda s: s[::-1]),
+                    ("swap-case", lambda s: s.swapcase()),
+                    ("strip-ws", lambda s: re.sub(r"[ \t\r\n]+", "", s)),
+                )
+                for _tname, _tfun in _transforms:
+                    _out = _tfun(_txt)
+                    if _out == _txt or not _out:
+                        continue
+                    _e_before = english_confidence(_txt)
+                    _e_after = english_confidence(_out)
+                    _flag_before = bool(is_flagish(_txt))
+                    _flag_after = bool(is_flagish(_out))
+                    _gain = _e_after - _e_before
+                    if not (_flag_after and not _flag_before) and _gain < 0.10:
+                        continue
+                    _out_b = _out.encode("utf-8", "replace")
+                    _newname = f"transform: {_tname}"
+                    _newchain = chain + (_newname,)
+                    if hashlib.sha256(_out_b).digest() in visited:
+                        continue
+                    visited.add(hashlib.sha256(_out_b).digest())
+                    stats["transforms_run"] += 1
+                    _val, _reason = ctx.assess(_out_b) if ctx.assess else (0.0, "")
+                    if _flag_after:
+                        _val = max(_val, 0.90)
+                        _reason = f"{_tname} transform revealed a flag-shaped string."
+                    _rec = {
+                        "chain": " -> ".join(_newchain),
+                        "plaintext": _out,
+                        "confidence": round(max(0.0, min(1.0, _val)), 4),
+                        "is_flag": _flag_after,
+                        "_reason": _reason,
+                        "_raw": _out_b,
+                        "_subst": False,
+                        "_pdelta": 0.0,
+                        "_english_ok": _flag_after is False and clear_english(_out),
+                        "_trust": 0,
+                    }
+                    _old = results.get(_out_b)
+                    if _old is None or _rec["confidence"] > _old["confidence"]:
+                        results[_out_b] = _rec
+                    if depth < max_depth and len(_out_b) <= 10_000_000:
+                        remember_child(chain_prior * 0.9, _out_b, _newchain,
+                                      depth + 1)
         jobs = []
         for item in REGISTRY:
             if ctx.speed < 1 and item.name in ctx.heavy_names:
@@ -1296,7 +1381,6 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                         digest = hashlib.sha256(out).digest()
                         if digest not in visited:
                             visited.add(digest)
-                            serial += 1
                             priority = chain_prior * prior * (
                                 .78 + .22 * score if decoder else max(.08, score)
                             )
@@ -1306,8 +1390,7 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                             # high-prior single-step guesses.
                             if decoder or has_encoding:
                                 priority *= 1.0 + 0.22 * depth
-                            heapq.heappush(heap, (-priority, serial, out, full_chain,
-                                                  priority, depth + 1))
+                            remember_child(priority, out, full_chain, depth + 1)
                     if recovered:
                         # Exact attacks (RSA, cracking and explicit cribs) are
                         # terminal at this node, but don't stop other search paths.
@@ -1329,6 +1412,9 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                         ctx.progress_callback("")
                     except Exception:
                         pass
+        # Phase 3 beam: after all solvers for this node have run, push the
+        # node's best `beam` children (transforms + solver outputs).
+        flush_children()
     if ctx.exact_found and ctx.pool is not None:
         try:
             ctx.pool.shutdown(wait=False, cancel_futures=True)

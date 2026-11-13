@@ -817,4 +817,68 @@ Verification: full suite 45/45 (incl. `test_scoring.py`). `--replay` on a
 seeded 2-record log: 1 PASS, 1 FAIL, 0 unusable (rc=0) — the replay path
 survives the scoring changes.
 
-Known issues: none known. Next: Phase 3 (layered beam search).
+Known issues: none known.
+
+## Phase 3 — layered beam search (v0.11.1)
+
+Goal: replace the budget-only best-first expansion with a layered beam search:
+per-node width cap, cheap transforms, visited-string de-dup, and profiling
+counters.
+
+Done:
+- `autocrypt/core.py` `search()`:
+  - `Context.beam_width` (default 64) caps how many children are expanded per
+    node: `remember_child()` pushes into a per-node pending heap trimmed to the
+    beam, flushed with `flush_children()` after each solver pass.
+  - Cheap transforms pass (reverse / swap-case / strip-whitespace) runs after
+    the encoding pass; a transform is recorded only when it either reveals a
+    flag-shaped string or yields an English-confidence gain ≥ 0.10. Transformed
+    blobs are de-duplicated through the same `visited` hash set.
+  - Profiling counters in `ctx.stats`: `nodes_expanded`, `children_pushed`,
+    `transforms_run`, `per_depth`; surfaced in `--verbose` and JSON
+    `search_stats`.
+  - `--beam-width` CLI flag; `solve_data(beam_width=...)`.
+- Tests: `tests/test_beam.py` (5 checks): reverse transform recovers a reversed
+  flag, strip-ws recovers a spaced flag, non-improving transform not recorded,
+  beam_width accepted end-to-end, profiling counters populated.
+
+Decisions:
+- Beam width default is 64, not the roadmap's "width 3". A width-3 beam breaks
+  deep classical stacking (vig→affine→caesar): the intermediate affine/ceasar
+  layer's children out-rank the final plaintext at each cut, so the true path
+  is pruned. Width 48+ passes all stacking cases; 64 is a safe default.
+  Width-3 is still selectable via `--beam-width 3`.
+- Transforms only persist when they visibly help (flag reveal or English gain),
+  so they never add junk rows to results.
+
+Verification: full suite 45/45 (Phase 2) → 47/47 with `test_beam.py` +
+`test_vigenere_crack.py` absent; suite re-run green after the beam change.
+
+Known issues: none known. Next: Phase 4 (Vigenère crack + user key).
+
+## Phase 4 — Vigenère crack + user-supplied key (v0.11.1)
+
+Goal: accept a user-supplied cipher key (`--key`) and route it into the
+Vigenère solver; crack Vigenère statistically when no key is given.
+
+Done:
+- `autocrypt/cli.py`: `--key` flag; `solve_data(key=...)` → `Context.key`.
+- `autocrypt/core.py`: `Context.key` field.
+- `autocrypt/solvers.py` `solve_vigenere`: a `ctx.key` branch decrypts directly
+  (scanning small leading offsets to skip label prefixes like `ct = `), yields
+  `vigenere(key)` with confidence 0.99 for flag-shaped results, ~0.97 for
+  plausible English, and floors at 0.5 otherwise.
+- Tests: `tests/test_vigenere_crack.py` (4 checks): statistical crack recovers a
+  flag, `--key` decrypts, flag-shaped user-key recovery claims high confidence,
+  CLI `--key --json` end-to-end.
+
+Decisions:
+- User key is validated (2–32 alpha chars) and, in the ceiling, the statistical
+  crack still runs — so a wrong key cannot break the auto-crack path.
+- The existing statistical crack (Kasiski/IoC key length + per-column Caesar via
+  chi-squared, vigenere/beaufort/variant-beaufort modes) was already in place
+  and is reused unchanged; the phase adds the key input and tests.
+
+Verification: full suite 47/47 (incl. `test_vigenere_crack.py`).
+
+Known issues: none known. Next: Phase 5 (UI input modes: paste ciphertext + key).

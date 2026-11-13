@@ -52,8 +52,8 @@ def _load_wordlist(path):
 def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=200,
                known_plaintext="", wordlist_path="", params="", jobs=None,
                progress_callback=None, flag_format_explicit=False, verbose=False,
-               strict=False, fast=False, deep=False, max_depth=6,
-               failure_log_path=None):
+               strict=False, fast=False, deep=False, max_depth=5,
+               failure_log_path=None, beam_width=None, key=""):
     """Run the existing fingerprint/search pipeline for both CLI and UI."""
     wordlist = _load_wordlist(wordlist_path)
     fp = fingerprint(data)
@@ -77,7 +77,9 @@ def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=200,
                   rsa_params=_params(params), assess=assess,
                   progress_callback=progress_callback, jobs=jobs,
                   strict=strict or bool(os.environ.get("AUTOCRYPT_STRICT")),
-                  speed=speed, heavy_names=heavy)
+                  speed=speed, heavy_names=heavy,
+                  beam_width=beam_width if beam_width is not None else 64,
+                  key=key)
     ctx.search_t0 = time.monotonic()
     pool = None
     if jobs > 1 and data and len(data) >= 128:
@@ -121,6 +123,13 @@ def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=200,
     if verbose:
         for name, dt in sorted(ctx.solver_times.items(), key=lambda kv: -kv[1])[:12]:
             print(f"[verbose] solver time {name}: {dt:.2f}s", file=sys.stderr)
+        _st = getattr(ctx, "stats", {})
+        print(f"[verbose] beam width={getattr(ctx, 'beam_width', 3)} "
+              f"nodes_expanded={_st.get('nodes_expanded')} "
+              f"children_pushed={_st.get('children_pushed')} "
+              f"transforms_run={_st.get('transforms_run')} "
+              f"per_depth={sorted(_st.get('per_depth', {}).items())}",
+              file=sys.stderr)
         if ctx.exact_found:
             print(f"[verbose] verified exact at {ctx.exact_time - ctx.search_t0:.2f}s: {ctx.exact_chain}",
                   file=sys.stderr)
@@ -206,6 +215,10 @@ def build_parser():
                    help="cut time in half: shorter per-solver slices, skip the slowest brute-force solvers")
     p.add_argument("--deep", action="store_true",
                    help="2x per-solver time and deeper search (for stubborn challenges)")
+    p.add_argument("--beam-width", type=int, default=64,
+                   help="max children expanded per search node (beam width); default 64")
+    p.add_argument("--key", default="",
+                   help="known cipher key (e.g. a Vigenère keyword); blank = crack automatically")
     p.add_argument("--failures", metavar="PATH",
                    help="JSONL log of undecoded inputs (default: failures.jsonl); also read by --replay")
     p.add_argument("--replay", action="store_true",
@@ -319,6 +332,8 @@ def main(argv=None):
             verbose=args.verbose, strict=args.strict,
             fast=args.fast, deep=args.deep,
             failure_log_path=args.failures or DEFAULT_FILE,
+            beam_width=args.beam_width,
+            key=args.key,
         )
         if ctx.bug_log:
             for bname, typ, tb in ctx.bug_log:
@@ -342,6 +357,8 @@ def main(argv=None):
             "elapsed_seconds": round(time.monotonic() - ctx.search_t0, 3),
             "solver_times": {name: round(dt, 3) for name, dt in sorted(
                 ctx.solver_times.items(), key=lambda kv: -kv[1])},
+            "search_stats": {k: (dict(v) if isinstance(v, dict) else v)
+                             for k, v in getattr(ctx, "stats", {}).items()},
             "first_exact": round(ctx.exact_time - ctx.search_t0, 2)
             if getattr(ctx, "exact_found", False) and ctx.exact_time else None,
             "fingerprint": {

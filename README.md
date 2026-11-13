@@ -249,6 +249,8 @@ parsing — challenge `.py` files are never executed, only read.
 | `--params PARAMS` | RSA parameters, e.g. `n=...,e=...,c=...` |
 | `--fast` | ~half the time: shorter per-solver slices, skip the slowest brute-force solvers |
 | `--deep` | 2× per-solver time + deeper layered decode search (max depth 6→9) |
+| `--beam-width N` | max children expanded per search node (default 64; use a small N for speed, larger for stacked classical layers) |
+| `--key KEY` | known cipher key (e.g. a Vigenère keyword); blank = crack automatically |
 | `--failures PATH` | append undecoded inputs as JSONL to PATH (default `failures.jsonl`); also read by `--replay` |
 | `--replay` | rerun every logged failure and report which now decode |
 | `--no-color` | disable ANSI colors |
@@ -262,6 +264,7 @@ autocrypt --json --top 5 --explain challenge.py output.txt
 autocrypt --timeout 60 --deep stubborn_input.txt
 autocrypt --failures /tmp/failures.jsonl mystery.bin
 autocrypt --replay --failures /tmp/failures.jsonl   # which failures now decode?
+autocrypt --key lemon cipher.txt                       # decrypt with known key
 ```
 
 When an input cannot be decoded, autocrypt appends one JSON line to
