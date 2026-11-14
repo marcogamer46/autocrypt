@@ -1,5 +1,19 @@
 # autocrypt progress
 
+## 0.11.9 (2026-11-14) — ship wordlist as package data + updater refresh
+
+User (Linux) reported `jzww{la_ab_iybal}` still not solving after updating to 0.11.8
+(`autocrypt --update` said "already latest"). Root cause: `english_words.txt` was never
+shipped in installed copies (it lived at repo root, outside the package), so the
+0.11.8 Caesar fix's wordlist fell back to the small `_COMMON` set → fraction 0 → crack
+never fired.
+
+Fixed: moved the wordlist into the package + declared package-data; `_large_wordlist()`
+now resolves via package dir / repo root / CWD / importlib.resources. Verified in a fresh
+wheel install (clean venv, neutral CWD): solves `jzww{la_ab_iybal}` →
+`cspp{et_tu_brute}` at rank 1. Also hardened the updater to reinstall non-editable copies
+even when the checkout is already at the latest commit. Full suite green.
+
 ## 0.11.8 (2026-11-13) — fix Caesar flag-shaped recovery
 
 User: "the ceasar cpher cant solve this jzww{la_ab_iybal} please fix it and do

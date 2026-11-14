@@ -994,3 +994,26 @@ Linux installers so `autocrypt` is a global command, and add
   `test_caesar_nonenglish_latin_body_recovers`; existing caesar + morse/binary suites
   green; full suite green (see run in this session).
 - Version bumped 0.11.7 -> 0.11.8.
+
+## Session: ship wordlist as package data + updater refresh (v0.11.9)
+
+- User (Linux) reported `jzww{la_ab_iybal}` still not solving even after updating to
+  0.11.8 and running `autocrypt --update` ("already latest"). Reproduced the exact UI
+  path on Windows: the repo solved it, but a wheel-installed copy did not.
+- Root cause: `english_words.txt` lived at the repo root, outside the `autocrypt/`
+  package, so installed copies never shipped it. `_large_wordlist()` (0.11.8) only
+  looked at the repo-root path; in an installed copy it fell back to the small
+  `_COMMON` set → body fraction 0 → the cracked-Caesar branch never fired.
+- Fix:
+  - `git mv english_words.txt autocrypt/english_words.txt`; declared package-data in
+    `pyproject.toml` (`[tool.setuptools.package-data] autocrypt = ["english_words.txt"]`).
+  - `_large_wordlist()` now resolves via package dir, repo root, CWD, or
+    `importlib.resources` (zipimport-safe).
+  - Updater: when the checkout is already at the latest commit, reinstall non-editable
+    copies (previously it returned "already latest" without reinstalling, leaving a
+    stale copy running).
+  - `tests/test_substitution_wordlist.py` now reads the wordlist from inside the package.
+- Verification: built a wheel and installed it into a clean venv; from a neutral CWD the
+  installed package solves `jzww{la_ab_iybal}` → `cspp{et_tu_brute}` (shift 7) at rank 1.
+  Full suite green.
+- Version bumped 0.11.8 -> 0.11.9.

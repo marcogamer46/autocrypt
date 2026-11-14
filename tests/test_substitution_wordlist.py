@@ -29,10 +29,10 @@ def build_case(n_words=9000, seed=17):
                        else mapping.get(c.lower(), c).upper() if c.isalpha()
                        else c for c in s)
 
-    # sample words from the bundled dictionary
+    # sample words from the bundled dictionary (lives inside the package now)
     words = []
-    with open(os.path.join(HERE, "english_words.txt"), encoding="utf-8",
-              errors="ignore") as f:
+    with open(os.path.join(ROOT, "autocrypt", "english_words.txt"),
+              encoding="utf-8", errors="ignore") as f:
         for line in f:
             w = line.strip().lower()
             if w and w.isalpha() and 4 <= len(w) <= 12:

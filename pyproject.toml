@@ -28,5 +28,8 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 packages = ["autocrypt"]
 
+[tool.setuptools.package-data]
+autocrypt = ["english_words.txt"]
+
 [tool.setuptools.dynamic]
 version = {attr = "autocrypt._version.__version__"}

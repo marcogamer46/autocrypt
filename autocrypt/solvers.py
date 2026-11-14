@@ -642,12 +642,21 @@ _WORDLIST_CACHE = None
 def _large_wordlist():
     global _WORDLIST_CACHE
     if _WORDLIST_CACHE is None:
-        p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                         "english_words.txt")
+        _pkg = os.path.dirname(os.path.abspath(__file__))
+        _cands = [
+            os.path.join(_pkg, "english_words.txt"),
+            os.path.join(os.path.dirname(_pkg), "english_words.txt"),
+            os.path.join(os.getcwd(), "english_words.txt"),
+        ]
+        _path = next((_c for _c in _cands if os.path.isfile(_c)), None)
         try:
-            with open(p, encoding="utf-8", errors="ignore") as _fh:
+            if _path is None:
+                # Installed-as-package-data fallback (zipimport / wheel).
+                from importlib.resources import files as _res_files
+                _path = _res_files("autocrypt").joinpath("english_words.txt")
+            with open(_path, encoding="utf-8", errors="ignore") as _fh:
                 _WORDLIST_CACHE = {_ln.strip() for _ln in _fh if _ln.strip()}
-        except OSError:
+        except (OSError, TypeError):
             _WORDLIST_CACHE = frozenset()  # fallback: branch simply never fires
     return _WORDLIST_CACHE
 

@@ -170,9 +170,12 @@ def test_replay_tolerates_bad_record_fields():
     abort the whole --replay run."""
     with tempfile.TemporaryDirectory() as td:
         path = Path(td) / "failures.jsonl"
+        # "good" record must reliably still FAIL on replay, so seed it with a
+        # deterministic undecodable input (a lone 'a'), not random bytes which
+        # occasionally decode and flip the expected [FAIL] into a [PASS].
         good = {"version": 1, "timestamp": "t", "status": "NOT_FOUND",
-                "input_b64": base64.b64encode(os.urandom(80)).decode(),
-                "length": 80, "decoders_tried": ["base64"], "best_score": 0.1,
+                "input_b64": base64.b64encode(b"a").decode(),
+                "length": 1, "decoders_tried": ["base64"], "best_score": 0.1,
                 "flag_format": r"\w{1,40}\{.*?\}", "timeout": 8,
                 "max_depth": 4, "params": "", "jobs": 1}
         bad = dict(good)

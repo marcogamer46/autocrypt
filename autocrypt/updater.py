@@ -154,6 +154,18 @@ def _update_git(root: Path):
         return 1
     old = current_version() or head[:7]
     if head == up:
+        # Already at the latest remote commit, but a NON-editable install may
+        # still be running stale code (or be missing packaged data) if it was
+        # installed before this commit. Reinstall to be sure; it is cheap and
+        # idempotent for non-editable copies.
+        if not _is_editable_install():
+            if not _maybe_reinstall_after_pull(root):
+                print("autocrypt: code is latest but reinstall failed; run "
+                      "'pip install --upgrade .' from the repo to finish.",
+                      file=sys.stderr)
+                return 1
+            print(f"autocrypt: already latest ({old}); refreshed install.")
+            return 0
         print(f"autocrypt: already latest ({old}).")
         return 0
     pr = _run(["git", "pull", "--ff-only", "origin", branch], cwd=root)

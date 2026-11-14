@@ -4,6 +4,24 @@ All notable changes to AutoCrypt are recorded here. Format: version → notable
 changes. See `PROGRESS.md` for detailed work logs and `LOGS.md` for the
 chronological session record.
 
+## 0.11.9 (unreleased) — ship wordlist as package data; updater refreshes non-editable installs
+
+- **Packaging fix (root cause of the Linux report)**: `english_words.txt` lived at the
+  repo root, *outside* the `autocrypt/` package, so any pip-installed copy never shipped
+  it. The Caesar flag-shape fix (0.11.8) depended on that wordlist; when it was missing,
+  the branch silently fell back to the small `_COMMON` set, scoring bodies like
+  `et_tu_brute` as 0.0 and never firing — exactly the symptom on Linux after updating.
+  Now the wordlist is moved *into* the package and declared as package-data
+  (`[tool.setuptools.package-data]`), and `_large_wordlist()` resolves it via package dir,
+  repo root, CWD, or `importlib.resources`. Verified in a freshly built wheel installed
+  into a clean venv: `jzww{la_ab_iybal}` → `cspp{et_tu_brute}` (shift 7) at rank 1.
+- **Updater hardening**: `autocrypt --update` previously reported "already latest" and
+  returned without reinstalling when the git checkout was current — so a stale
+  non-editable install kept running old code. It now reinstalls non-editable copies even
+  when the checkout is already at the latest commit.
+- Test path updated: `tests/test_substitution_wordlist.py` reads the wordlist from inside
+  the package.
+
 ## 0.11.8 (unreleased) — fix Caesar flag-shaped recovery (full-wordlist body coherence)
 
 - Fixes the `cracked Caesar` branch introduced in 0.11.7: that version referenced
