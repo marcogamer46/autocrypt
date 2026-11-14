@@ -1017,3 +1017,24 @@ Linux installers so `autocrypt` is a global command, and add
   installed package solves `jzww{la_ab_iybal}` → `cspp{et_tu_brute}` (shift 7) at rank 1.
   Full suite green.
 - Version bumped 0.11.8 -> 0.11.9.
+
+## Session: Phase 2 --profile + Phase 3 known-key + Phase 1 frontier (v0.11.10)
+
+Task: "fix the missing / not specified then commit ... just fix what need to be fixed
+frst before goping to this one" — close the three roadmap gaps before the new Phase 6.
+
+- Phase 2 missing `--profile` scoring flag:
+  - Added profile block in `autocrypt/scoring.py`: `token_score`, `readable_score`,
+    `none_score`, `get_assessor`, `_PROFILES`, `_is_valid_pkcs7`, `_UUID_RE`,
+    `_JWT_RE`, `_PROFILE_CHARSETS`. `--profile {flag,token,readable,none}` wired into
+    `build_parser`, `solve_data(profile=...)`, and `Context(profile=...)`.
+  - Threaded profile into worker subprocesses (`_solver_worker` args + `get_assessor`);
+    fixed a `_re` vs `re` NameError in the new scoring block.
+- Phase 3 known-key mode (was missing): `known-key` solver in `solvers_pack7.py`.
+  Derives raw/hex/md5/sha1/sha256 key forms; tries repeating-XOR, RC4, Vigenère,
+  Beaufort; acceptance blends the active profile with `english_confidence`. Wrong keys
+  yield nothing. Verified Vigenère, flag-shaped Vigenère, repeating-XOR, RC4-hashed-key.
+- Phase 1 frontier: `real_challenges/unsolved/` with `vigenere_unknown_key.txt`
+  (key IAMVERYSTUPID, not guessable) + `things_it_cant_solve.txt` baseline.
+- New `tests/test_profiles_and_knownkey.py` (profiles + known-key recovery).
+- Bumped 0.11.9 -> 0.11.10; full suite gate below.

@@ -674,6 +674,108 @@ def solve_rc4(data, ctx):
             yield out, "RC4 key", {"key_len": len(key)}, score
 
 
+# ------------------------------------------------------------- known-key mode
+# Phase 3: when --key is supplied, decrypt with derived key forms -- raw ASCII,
+# raw hex, and md5/sha1/sha256 digest bytes+hex -- across repeating-XOR,
+# Vigenère, Beaufort and RC4. Acceptance combines the active scoring profile
+# (ctx.assess: ranks structure under --profile token/readable/none) with the
+# English signal (english_confidence) for classical decodes. Without a key the
+# solver early-returns and costs ~nothing.
+
+def _known_key_accept(ctx, assessor, as_score, txt, in_score):
+    """Return (accept, confidence, is_flag) for a candidate decrypt."""
+    is_flag = bool(ctx.flag_regex.search(txt)) or flag_plausibility(txt) > 0
+    if is_flag and as_score >= 0.5:
+        return True, 0.99, True
+    ec = english_confidence(txt)
+    if ec >= 0.7:
+        return True, round(min(0.97, 0.6 + 0.35 * ec), 3), False
+    if as_score > max(0.62, in_score + 0.15):
+        return True, round(min(0.97, as_score), 3), False
+    return False, 0.0, False
+
+def _known_key_candidates(key):
+    """Build [(derivation_label, key_bytes)] for every form of the user key."""
+    cands = []
+    k = (key or "").strip()
+    if not k:
+        return cands
+    raw = k.encode("utf-8", "replace")
+    cands.append(("raw", raw))
+    if len(k) >= 2 and len(k) % 2 == 0 and all(c in "0123456789abcdefABCDEF" for c in k):
+        try:
+            cands.append(("hex", bytes.fromhex(k)))
+        except ValueError:
+            pass
+    for name in ("md5", "sha1", "sha256"):
+        d = getattr(hashlib, name)(raw).digest()
+        cands.append((f"{name}-raw", d))
+        cands.append((f"{name}-hex", d.hex().encode()))
+    out, seen = [], set()
+    for label, kb in cands:
+        if kb and kb not in seen:
+            seen.add(kb)
+            out.append((label, kb))
+    return out
+
+
+def _known_key_prior(fp):
+    # Fire wherever ciphertext is plausible; solve() gates on ctx.key presence.
+    return .4 if fp["charset"] == "ascii-text" and fp["length"] >= 8 else 0.0
+
+
+@solver("known-key", _known_key_prior)
+def solve_known_key(data, ctx):
+    key = getattr(ctx, "key", "")
+    if not key or ctx.depth > 2:
+        return
+    try:
+        text = data.decode("utf-8", "replace")
+    except Exception:
+        text = None
+    assessor = ctx.assess or assess
+    try:
+        in_score, _ = assessor(data)
+    except Exception:
+        in_score = 0.0
+    yield_count = 0
+    for label, kb in _known_key_candidates(key):
+        if yield_count >= 16 or ctx.expired():
+            break
+        # --- byte transforms: repeating-XOR, RC4 ---
+        xortxt = bytes(b ^ kb[i % len(kb)] for i, b in enumerate(data))
+        rc4txt = _rc4(kb, data)
+        for dec, meth in ((xortxt, "repeating-XOR"), (rc4txt, "RC4")):
+            if not dec:
+                continue
+            try:
+                dec_txt = dec.decode("utf-8", "replace")
+            except Exception:
+                continue
+            sc, _why = assessor(dec)
+            ok, conf, is_flag = _known_key_accept(ctx, assessor, sc, dec_txt, in_score)
+            if ok:
+                yield dec_txt, f"{meth}(key={label})", {"key": label, "derivation": label}, conf
+                yield_count += 1
+        # --- text transforms: Vigenère, Beaufort (available/lowercase keys) ---
+        if text is not None and len(text) >= 6:
+            vk = kb.decode("ascii", "ignore").upper() or "A"
+            bf = _beaufort_decrypt(text, vk)
+            vg = _vigenere_decrypt(text, vk)
+            if bf is not None:
+                sc, _why = assessor(bf)
+                ok, conf, is_flag = _known_key_accept(ctx, assessor, sc, bf, in_score)
+                if ok:
+                    yield bf, f"Beaufort(key={label})", {"key": label, "derivation": label}, conf
+                    yield_count += 1
+            if vg:
+                sc, _why = assessor(vg)
+                ok, conf, is_flag = _known_key_accept(ctx, assessor, sc, vg, in_score)
+                if ok:
+                    yield vg, f"Vigenère(key={label})", {"key": label, "derivation": label}, conf
+                    yield_count += 1
+
+
 def _ecb_prior(fp):
     return .6 if fp["length"] >= 32 and "repeated 16-byte blocks" in fp.get("magic", []) else 0.0
 

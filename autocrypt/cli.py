@@ -53,7 +53,7 @@ def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=200,
                known_plaintext="", wordlist_path="", params="", jobs=None,
                progress_callback=None, flag_format_explicit=False, verbose=False,
                strict=False, fast=False, deep=False, max_depth=5,
-               failure_log_path=None, beam_width=None, key=""):
+               failure_log_path=None, beam_width=None, key="", profile="flag"):
     """Run the existing fingerprint/search pipeline for both CLI and UI."""
     wordlist = _load_wordlist(wordlist_path)
     fp = fingerprint(data)
@@ -70,12 +70,13 @@ def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=200,
         heavy = frozenset()
     if deep:
         max_depth = 9
+    from autocrypt.scoring import get_assessor
     ctx = Context(deadline=time.monotonic() + timeout,
                   flag_regex=re.compile(flag_format, re.DOTALL),
                   flag_regex_explicit=flag_format_explicit,
                   known_plaintext=known_plaintext, wordlist=wordlist,
-                  rsa_params=_params(params), assess=assess,
-                  progress_callback=progress_callback, jobs=jobs,
+                  rsa_params=_params(params), assess=get_assessor(profile),
+                  profile=profile, progress_callback=progress_callback, jobs=jobs,
                   strict=strict or bool(os.environ.get("AUTOCRYPT_STRICT")),
                   speed=speed, heavy_names=heavy,
                   beam_width=beam_width if beam_width is not None else 64,
@@ -217,6 +218,9 @@ def build_parser():
                    help="2x per-solver time and deeper search (for stubborn challenges)")
     p.add_argument("--beam-width", type=int, default=64,
                    help="max children expanded per search node (beam width); default 64")
+    p.add_argument("--profile", default="flag", choices=["flag", "token", "readable", "none"],
+                    help="scoring profile: flag (English+flag-shape, default), token "
+                         "(structural/code), readable (lenient), none (no language scoring)")
     p.add_argument("--key", default="",
                    help="known cipher key (e.g. a Vigenère keyword); blank = crack automatically")
     p.add_argument("--failures", metavar="PATH",
@@ -334,6 +338,7 @@ def main(argv=None):
             failure_log_path=args.failures or DEFAULT_FILE,
             beam_width=args.beam_width,
             key=args.key,
+            profile=args.profile,
         )
         if ctx.bug_log:
             for bname, typ, tb in ctx.bug_log:

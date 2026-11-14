@@ -114,6 +114,7 @@ class Context:
     bug_log: list[tuple[str, str, str]] = field(default_factory=list)
     strict_failed: bool = False
     assess: Callable[[bytes | str], tuple[float, str]] | None = None
+    profile: str = "flag"
     progress_callback: Callable[[str], None] | None = None
     depth: int = 0
     flag_regex_explicit: bool = False
@@ -153,7 +154,7 @@ def _solver_worker(args):
     import os
     os.environ["AUTOCRYPT_WORKER"] = "1"
     import re as _re
-    name, blob, depth, deadline, flag_pattern, flag_explicit, known_plaintext, wordlist, rsa_params = args
+    name, blob, depth, deadline, flag_pattern, flag_explicit, known_plaintext, wordlist, rsa_params, profile = args
     import autocrypt.core as _core
     import autocrypt.solvers  # noqa: F401  register registry
     ctx = _core.Context(
@@ -163,7 +164,7 @@ def _solver_worker(args):
         known_plaintext=known_plaintext,
         wordlist=wordlist,
         rsa_params=rsa_params,
-        assess=importlib.import_module("autocrypt.scoring").assess)
+        assess=importlib.import_module("autocrypt.scoring").get_assessor(profile))
     ctx.depth = depth
     solver = next((s for s in _core.REGISTRY if s.name == name), None)
     if solver is None:
@@ -757,6 +758,12 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                 continue
             # Static, input-independent gate applied BEFORE pool submission so
             # a skipped solver never occupies a worker.
+            # The key-gated "known-key" solver only participates when --key is
+            # actually supplied; otherwise it would occupy a job slot in the
+            # generic search and (by reordering by prior) crowd out dedicated
+            # solvers such as crockford-base32.
+            if item.name == "known-key" and not getattr(ctx, "key", ""):
+                continue
             if item.name == "monoalphabetic-substitution":
                 if chain and any(step.split("(", 1)[0].lower() not in decoder_names
                                  for step in chain):
@@ -788,7 +795,7 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                 and fp.get("charset") != "ascii-text":
             args = [(it.name, blob, depth, ctx.deadline, ctx.flag_regex.pattern,
                      ctx.flag_regex_explicit, ctx.known_plaintext,
-                     list(ctx.wordlist)[:2000], ctx.rsa_params)
+                     list(ctx.wordlist)[:2000], ctx.rsa_params, ctx.profile)
                     for _, it in jobs]
             futures = [ctx.pool.submit(_solver_worker, ar) for ar in args]
             precomp = {it.name: fu for (_, it), fu in zip(jobs, futures)}

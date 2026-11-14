@@ -1,0 +1,36 @@
+Things AutoCrypt cannot solve yet
+=================================
+
+This directory is the frontier: inputs the solver genuinely cannot recover, kept
+as a regression baseline. When a future feature claims to widen coverage, it must
+convert at least one of these from "unsolved" to "solved" — and the corresponding
+test is added to tests/ so the improvement stays fixed.
+
+Conventions
+-----------
+- Every file here is a *raw ciphertext/encoded blob* with no key embedded in the
+  text itself (keys are not guessable, not in any bundled wordlist).
+- The "expected" plaintext is documented below for verification only; it is never
+  provided to the solver at runtime (no --key, no known-plaintext crib).
+- `things_it_cant_solve.txt` is the human summary; use `--json` to check status.
+
+Cases
+-----
+
+1. vigenere_unknown_key.txt
+   Cipher: Vigenère, key IAMVERYSTUPID (not in dictionary/wordlist; 14 letters).
+   Plaintext: "the flag is academy you cannot crack this one with a dictionary key"
+   Why it fails: automatic Vigenère cracking relies on dictionary/wordlist keys
+   (vigenere-dictionary) or statistical key recovery (vigenere-brute). A key
+   that is neither a real word nor statistically recoverable from 60 chars of
+   text stays unbroken. Status: NOT_FOUND (or false-positive junk chains).
+   Frontier: statistical key-length recovery for longer keys; hill-climbing key
+   search without a language model that produces false positives.
+
+Notes
+-----
+- False positives here are as informative as misses: several cipher families
+  currently emit *junk* decrypts marked as flags (confidence ≥ 0.90) on this
+  input. That is a precision bug, not a success — a correct solver should
+  return NOT_FOUND, not a fake flag. Phase 6's prune-by-structure work should
+  reduce exactly this noise.

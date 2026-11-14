@@ -4,6 +4,26 @@ All notable changes to AutoCrypt are recorded here. Format: version → notable
 changes. See `PROGRESS.md` for detailed work logs and `LOGS.md` for the
 chronological session record.
 
+## 0.11.10 (unreleased) — Phase 2 --profile scoring; Phase 3 known-key mode; Phase 1 unsolved frontier
+
+- **Scoring profiles (`--profile` / `solve_data(profile=...)`)**: new profile block in
+  `autocrypt/scoring.py` — `token_score` (structural: printable, clean charset, sensible
+  length, entropy band, valid PKCS#7 padding, magic bytes), `readable_score` (printable +
+  clean text, no English gate), `none_score` (neutral). `get_assessor(profile)` resolves a
+  profile name; the default stays `flag`. `--profile` accepts `flag|token|readable|none`;
+  the profile is threaded through `Context(profile=...)` and into worker subprocesses so
+  `-j1/-j4` stay consistent.
+- **Known-key mode (Phase 3)**: new `known-key` solver in `solvers_pack7.py` fires when
+  `--key` is supplied. It derives candidate keys — raw ASCII, raw hex, and md5/sha1/sha256
+  digest bytes+hex — and tries each against repeating-XOR, RC4, Vigenère and Beaufort.
+  Acceptance combines the active profile with `english_confidence`, so flag/English and
+  structural (token/readable) decodes both surface; a wrong key yields nothing.
+- **Phase 1 unsolved frontier**: `real_challenges/unsolved/` added with
+  `vigenere_unknown_key.txt` (Vigenère, key not in any wordlist) and
+  `things_it_cant_solve.txt` documenting it as a regression baseline.
+- Tests: `tests/test_profiles_and_knownkey.py` (profile resolution/scoring + known-key
+  recovery including hash-derived RC4 and flag-shaped Vigenère).
+
 ## 0.11.9 (unreleased) — ship wordlist as package data; updater refreshes non-editable installs
 
 - **Packaging fix (root cause of the Linux report)**: `english_words.txt` lived at the

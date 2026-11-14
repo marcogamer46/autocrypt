@@ -403,6 +403,130 @@ def assess(data: bytes | str) -> tuple[float, str]:
         reason = "Weak English evidence; result may be a false positive."
     return value, reason
 
+
+# ---------------------------------------------------------------- profiles ----
+# Phase 2 scoring profiles. `assess` above is the default "flag" profile (English
+# + flag-shape). The token/readable/none profiles rank by *structure* instead of
+# English, and are selected via --profile / solve_data(profile=...). Each
+# returns the same (float, reason) shape as `assess`.
+
+_PROFILE_CHARSETS = {
+    "hex": frozenset("0123456789abcdefABCDEF"),
+    "base64url": frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"),
+    "alnum": frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"),
+    "upperalnum": frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"),
+    "url": frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:/?#[]@!$&'()*+,;=%"),
+}
+
+_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                      r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+_JWT_RE = re.compile(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$")
+_PKCS7_BLOCKSIZES = (8, 16)
+
+
+def _is_valid_pkcs7(data: bytes) -> bool:
+    """True if data ends with valid PKCS#7 padding for an 8/16-byte block."""
+    if not data:
+        return False
+    pad = data[-1]
+    if pad < 1 or pad > 16:
+        return False
+    if len(data) < pad:
+        return False
+    if pad not in (8, 16) and len(data) % pad not in (0,):
+        return False
+    return data[-pad:] == bytes([pad]) * pad
+
+
+def token_score(data: bytes | str) -> tuple[float, str]:
+    """Structural scoring for token/code-shaped output: printable, clean charset,
+    sensible length, sane entropy, and strong integrity signals (valid padding,
+    magic bytes). Intended for ranking JWT/UUID/hex/base64/code-shaped decodes
+    independent of English."""
+    if isinstance(data, str):
+        raw = data.encode("utf-8", "replace")
+    else:
+        raw = data
+    if not raw:
+        return 0.0, "empty"
+    text = raw.decode("utf-8", "replace")
+    printable = sum(c.isprintable() or c in "\r\n\t" for c in text) / len(text)
+    score = 0.15 * min(1.0, printable)
+    if len(text) >= 4:
+        allowed = _PROFILE_CHARSETS["alnum"]
+        if all(c in allowed or c in "_{}-" for c in text):
+            score += 0.25
+        if all(c in _PROFILE_CHARSETS["alnum"] for c in text):
+            if text.isupper() and len(text) >= 6:
+                score += 0.15
+            elif not text.isupper():
+                score += 0.1
+    # sensible lengths: 16/32/64 (+ UUID / base64 multiples)
+    n = len(text)
+    sensible = n in (16, 32, 64) or n % 4 == 0 or bool(_UUID_RE.match(text))
+    if sensible:
+        score += 0.15
+    # entropy in a sane band (0.8–1.0 bits/char is "token-like"; extreme skew is not)
+    import math as _m
+    counts = collections.Counter(text)
+    ent = -sum((c / n) * _m.log2(c / n) for c in counts.values())
+    maxent = _m.log2(len(counts)) if counts else 0
+    if 2.0 <= ent <= max(n * 0.9, 2.0):
+        score += 0.15
+    # integrity: valid PKCS7 padding / magic bytes are a very strong signal
+    if _is_valid_pkcs7(raw) and len(raw) >= 8:
+        score = max(score, 0.92)
+    for magic in (b"PK\x03\x04", b"\x1f\x8b", b"BZh", b"\xfd7zXZ\x00"):
+        if raw.startswith(magic):
+            score = max(score, 0.95)
+            break
+    score = max(0.0, min(1.0, score))
+    reason = "token/code structure" if score >= 0.5 else "weak structural evidence"
+    return score, reason
+
+
+def readable_score(data: bytes | str) -> tuple[float, str]:
+    """Structure-lenient readable profile: printable + letters/digits/space, not
+    English-gated. Used when flag-scoring finds nothing but the output is
+    human-readable text (e.g. label/value lines)."""
+    if isinstance(data, str):
+        text = data
+    else:
+        text = data.decode("utf-8", "replace")
+    if not text:
+        return 0.0, "empty"
+    printable = sum(c.isprintable() or c in "\r\n\t" for c in text) / len(text)
+    allowed = set(_string.ascii_letters) | set(_string.digits) | set(" \t\r\n.,;:?!'\"()-/_")
+    clean = sum(c in allowed for c in text) / len(text)
+    score = 0.5 * min(1.0, printable) + 0.5 * min(1.0, clean)
+    reason = "readable text" if score >= 0.5 else "low readability"
+    return score, reason
+
+
+def none_score(data: bytes | str) -> tuple[float, str]:
+    """No language/structure ranking: neutral score so ordering falls to chain
+    priors/claimed confidence. Slight printable boost to break ties."""
+    if isinstance(data, str):
+        text = data
+    else:
+        text = data.decode("utf-8", "replace")
+    printable = sum(c.isprintable() or c in "\r\n\t" for c in text) / max(1, len(text))
+    return 0.5 + 0.1 * printable, "no scoring profile"
+
+
+_PROFILES = {
+    "flag": assess,
+    "token": token_score,
+    "readable": readable_score,
+    "none": none_score,
+}
+
+
+def get_assessor(profile: str):
+    """Return the assess callable for a --profile name (default: flag)."""
+    return _PROFILES.get((profile or "flag").lower(), assess)
+
+
 # Public alias so solvers can import WORDS instead of _COMMON
 WORDS = _COMMON
 

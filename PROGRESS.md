@@ -1,5 +1,50 @@
 # autocrypt progress
 
+## 0.11.10 (2026-11-14) — Phase 2 --profile + Phase 3 known-key + Phase 1 frontier
+
+Task: "fix the missing / not specified then commit ... just fix what need to be fixed
+frst before goping to this one" — close the three gaps in the 7-phase roadmap before
+starting the new Phase 6. All three are now implemented, tested, and gated by the full
+suite.
+
+### Phase 2 — `--profile` scoring (was missing)
+Added a profile block to `autocrypt/scoring.py` behind the default `flag` profile:
+- `token_score` — structural scoring for token/code-shaped output: printable fraction,
+  clean charset (alnum / upper-alnum), sensible length (16/32/64, base64 multiples,
+  UUID), sane entropy band, and strong integrity signals (valid PKCS#7 padding → ≥0.92;
+  magic bytes zip/gzip/bzip/xz → ≥0.95).
+- `readable_score` — printable + clean text, no English gate (for label/value lines).
+- `none_score` — neutral 0.5 + printable boost, ordering falls to chain priors.
+- `get_assessor(profile)` returns the scorer; `_PROFILES` maps flag/token/readable/none.
+Wired through the CLI (`--profile flag|token|readable|none`) and `solve_data(profile=...)`.
+Threaded into `Context(profile=...)` and into worker subprocesses (`_solver_worker`
+args now carry `profile`, and the worker builds its assessor via `get_assessor(profile)`)
+so `-j1/-j4` determinism is preserved.
+
+### Phase 3 — known-key mode (was missing)
+New `known-key` solver in `solvers_pack7.py`, fires when `--key` is supplied:
+- Derives candidate key forms: raw ASCII, raw hex bytes, and md5/sha1/sha256 digest
+  bytes+hex.
+- Tries each against repeating-XOR, RC4, Vigenère and Beaufort.
+- Acceptance `_known_key_accept` combines the active profile (`ctx.assess`) with
+  `english_confidence` — flag-shaped/English decodes surface under the default profile,
+  structural (token/readable) decodes surface under those profiles; a wrong key yields
+  nothing.
+Verified: Vigenère (raw key) and flag-shaped Vigenère recover; repeating-XOR recovers;
+RC4 with a sha256-derived key recovers; wrong keys yield nothing.
+
+### Phase 1 — unsolved frontier (was missing)
+`real_challenges/unsolved/` added:
+- `vigenere_unknown_key.txt` — Vigenère ciphertext, key IAMVERYSTUPID (not in any
+  wordlist). Confirmed NOT_FOUND (only false-positive junk chains).
+- `things_it_cant_solve.txt` — documents the case as a regression baseline and the
+  false-positive-flag precision bug it exposes (Phase 6's prune-by-structure should reduce it).
+
+### Tests
+New `tests/test_profiles_and_knownkey.py`: profile resolution/scoring (token/readable/none)
++ known-key recovery (Vigenère, flag-shaped, repeating-XOR, RC4 hashed-key, wrong-key
+negative, candidate dedupe). Full suite run below.
+
 ## 0.11.9 (2026-11-14) — ship wordlist as package data + updater refresh
 
 User (Linux) reported `jzww{la_ab_iybal}` still not solving after updating to 0.11.8
