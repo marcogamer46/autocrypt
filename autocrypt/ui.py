@@ -444,6 +444,7 @@ def _solve(data, settings, params=""):
             wordlist_path=settings["wordlist"], params=params,
             progress_callback=progress, flag_format_explicit=settings["flag_format_explicit"],
             key=settings.get("key", ""),
+            node_budget=settings.get("node_budget"),
             failure_log_path=DEFAULT_FILE,
         )
     finally:
@@ -661,16 +662,17 @@ def interactive():
         except (ImportError, AttributeError):
             pass
     settings = {"flag_format": r"\w{1,40}\{.*?\}", "flag_format_explicit": False, "timeout": 20.0,
-                "top": 5, "known_plaintext": "", "wordlist": "", "key": ""}
+                "top": 5, "known_plaintext": "", "wordlist": "", "key": "",
+                "node_budget": None}
     last = {}
     print(banner())
     _tab_completion()
     while True:
         print(box("Main menu", [
             "1. Paste ciphertext", "2. Load from file", "3. RSA mode (paste n,e,c)",
-            "4. Settings", "5. Help", "6. Quit"]))
+            "4. Settings", "5. Help", "6. Quit", "7. Smart search (node budget)"]))
         try:
-            choice = input("Select 1–6 (or a letter): ").strip().lower()
+            choice = input("Select 1–7 (or a letter): ").strip().lower()
         except EOFError:
             return 0
         except KeyboardInterrupt:
@@ -719,8 +721,18 @@ def interactive():
                 continue
             elif choice in ("6", "q"):
                 return 0
+            elif choice in ("7", "m"):
+                # Phase 6 smart search: node-budget-preset, deterministic across
+                # -j1/-j4. Prompt for the budget (blank = 2500).
+                try:
+                    nb = input("Node budget (iterations; blank = 2500): ").strip()
+                except EOFError:
+                    nb = ""
+                settings["node_budget"] = int(nb) if nb.isdigit() else 2500
+                data = _paste()
+                last.update(notes=[], source="")
             else:
-                print(paint("Choose 1–6.", "yellow"))
+                print(paint("Choose 1–7.", "yellow"))
                 continue
             while True:
                 try:

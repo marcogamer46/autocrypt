@@ -1146,3 +1146,29 @@ Implemented (`autocrypt/solvers.py` solve_caesar):
 Verification: `tests/test_caesar_flagshape.py` (flag recovery across academy/flag/
 picoCTF/htb prefixes + an English regression guard) green; golden vectors 21/21,
 rot13 academy, base36-caesar, flagshape suites green; full suite (see LOGS).
+
+## 0.11.11 — Phase 6: smart node-budget search, structural pruning, learning, benchmark
+
+Task: "now next" (start Phase 6). Preceded by an adversarial design-review workflow
+(21 findings across determinism / pruning / learning / integration) that shaped the
+implementation.
+
+Implemented:
+- `Context.node_budget` + `learned_prior`; deterministic loop termination by node
+  count (wall-clock kept only as a hard ceiling). `-j1/-j4` determinism via pinned
+  worker hash seeds, a 128-yield in-process cap matching pool workers, and the
+  adaptive slice-extension disabled in smart mode.
+- `fingerprint()` now emits `family` (hash/compression/encoding/substitution/
+  polyalphabetic/ambiguous-text), `nletters`, `alpha_pure`; job collection uses a
+  conservative `_applicable()` structural gate so hash blobs no longer waste
+  classical-cipher workers and monoalphabetic substitution is pruned only on large
+  alpha-pure low-IC samples. Root structure label exposed in `search_stats`.
+- `autocrypt/learning.py`: read-only frozen-snapshot priors (pure function of
+  family + snapshot digest + fixed seed; never writes during a run).
+- `gen_chains.py`: fixed-seed TRAIN/HOLDOUT (500 each) chained-transform benchmark;
+  aggregate-only report (solve rate by depth / step / type; no individual failures).
+- CLI flags `--node-budget`/`--smart`/`--solved-chains`; UI menu "7. Smart search
+  (node budget)" appended (branches 1–6 unchanged); Settings forwards node_budget.
+
+Verification: `tests/test_smart.py` (9 checks) green; `run_tests.sh` 43/43;
+`test_matrix.py` exit 0; `run_all_tests.sh` green. Default path behavior unchanged.

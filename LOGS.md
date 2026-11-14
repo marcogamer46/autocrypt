@@ -1038,3 +1038,21 @@ frst before goping to this one" — close the three roadmap gaps before the new 
   (key IAMVERYSTUPID, not guessable) + `things_it_cant_solve.txt` baseline.
 - New `tests/test_profiles_and_knownkey.py` (profiles + known-key recovery).
 - Bumped 0.11.9 -> 0.11.10; full suite gate below.
+
+## 0.11.11 — Phase 6 smart-mode milestone (node budget, structural gate, learning, benchmark)
+- Design review (workflow `w0ypgrevy`): 21 findings — machine a monet metering caused
+  `-j1/-j4` divergence; job-collection gates insufficient (hash blobs burned ~30
+  classical workers); learning non-reproducibility risk; UI/CLI integration points.
+- Determinism: `--node-budget`/`--smart` bounds the search by node count (not
+  wall-clock). Pinned `PYTHONHASHSEED=0` before pool spawn; in-process path capped at
+  128 yields to match workers; load-sensitive adaptive slice extension disabled in
+  smart mode. Wall-clock stays as a safety ceiling.
+- Structural pruning: `fingerprint()` `family`/`nletters`/`alpha_pure`; `_applicable()`
+  gate before pool submit prunes hash-blob classical ciphers and prunes monoalphabetic
+  substitution only on alpha-pure IC-low samples. `search_stats.structure` labels root.
+- Learning: `autocrypt/learning.py` frozen read-only snapshot -> deterministic priors;
+  `--solved-chains`. Benchmark: `gen_chains.py` TRAIN/HOLDOUT (500 each, fixed seeds),
+  aggregate-only report; holdout run deferred to the end.
+- Wired `--node-budget`/`--smart`/`--solved-chains`; UI menu 7 appended intact 1–6.
+- Tests: `tests/test_smart.py` (9) green; `run_tests.sh` 43/43; `test_matrix.py` 0;
+  `run_all_tests.sh` green. Bumped 0.11.10 -> 0.11.11.

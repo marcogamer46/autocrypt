@@ -30,6 +30,36 @@ _SENTENCE_WORDS = set(
     .split())
 # Fixed (keyless) letter substitutions: output shape proves the plaintext.
 _FIXED_SUBSTITUTIONS = {"atbash"}
+# Phase 6 structural family gate: classical letter-ciphers and transpositions
+# cannot invert a one-way hash, so when the fingerprint labels a blob as a hash
+# we prune exactly these (never the encoder/decoder paths or hash-crackers).
+_CLASSICAL_LETTER_SOLVERS = frozenset({
+    "caesar", "rot13", "rot47", "atbash", "affine", "vigenere-family",
+    "vigenere-dictionary", "vigenere-wordlist", "autokey", "gronsfeld",
+    "beaufort", "porta", "variant-beaufort", "variants-beaufort", "rail-fence",
+    "scytale", "columnar-transposition", "playfair", "enigma-m3",
+    "monoalphabetic-substitution",
+})
+
+
+def _applicable(name: str, fp: dict, chain: tuple) -> bool:
+    """Phase 6 structural family gate for job collection. Conservative by
+    design: it only prunes solvers that provably cannot invert this fingerprint
+    family, and never removes encoder/decoder paths (a hash is still a valid
+    encoding layer) or hash-crack/offline-attack solvers. Runs BEFORE pool
+    submission so a pruned solver never occupies a worker."""
+    base = name.split("(", 1)[0].lower().strip()
+    # Hash-labeled blobs: classical letter-ciphers and transpositions cannot
+    # invert a one-way hash (MD5/SHA-1/SHA-256/bcrypt). Keep decoders.
+    if fp.get("hashes") and base in _CLASSICAL_LETTER_SOLVERS:
+        return False
+    # IC-based pruning only on large alpha-pure samples where IC is meaningful.
+    # A true monoalphabetic substitution preserves IC ≈ English (~0.066); a
+    # much lower IC means polyalphabetic/random, so substitution cannot be right.
+    if fp.get("alpha_pure") and fp.get("nletters", 0) >= 100:
+        if fp.get("ic", 0.0) < 0.045 and base == "monoalphabetic-substitution":
+            return False
+    return True
 
 
 def _is_transposition(method: str) -> bool:
@@ -129,6 +159,8 @@ class Context:
     beam_width: int = 64    # Phase 3: max children expanded per node (beam)
     stats: dict = field(default_factory=dict)  # Phase 3 profiling counters
     key: str = ""           # Phase 4: optional user-supplied cipher key
+    node_budget: int | None = None  # Phase 6: deterministic node/iteration cap (smart mode)
+    learned_prior: dict = field(default_factory=dict)  # Phase 6: frozen-snapshot priors
 
     def expired(self) -> bool:
         return time.monotonic() >= self.deadline
@@ -501,6 +533,31 @@ def fingerprint(data: bytes) -> dict:
             _han = True
     except Exception:
         pass
+    # Phase 6 structure labels: a conservative `family` derived from the
+    # already-computed signals, plus the sample size facts the pruning gate
+    # needs. `family` is a strong reordering/elimination hint for the job
+    # collection gate — never a hard elimination of decoder paths.
+    nletters = sum(97 <= b <= 122 or 65 <= b <= 90 for b in s)
+    _nonspace = sum(32 <= b < 127 for b in s)
+    alpha_pure = _nonspace > 0 and nletters / _nonspace >= 0.95
+    family = "unknown"
+    if hashes:
+        family = "hash"
+    elif any(m in magic for m in ("gzip", "zlib", "bzip2")) or "PEM" in magic:
+        family = "compression"
+    elif classes:
+        family = "encoding"
+    elif charset == "ascii-text":
+        if nletters >= 100 and alpha_pure:
+            _ichere = _ic(s)
+            if _ichere < 0.045:
+                family = "polyalphabetic"
+            elif _ichere >= 0.060:
+                family = "substitution"
+            else:
+                family = "ambiguous-text"
+        else:
+            family = "ambiguous-text"
     return {
         "_tags": _tags, "_han": _han,
         "length": len(data), "entropy": _entropy(s), "charset": charset,
@@ -508,6 +565,7 @@ def fingerprint(data: bytes) -> dict:
         "hypotheses": sorted(hypotheses.items(), key=lambda x: -x[1]),
         "prior_map": hypotheses, "magic": magic, "hashes": hashes,
         "filetype": filetype, "_text": text, "_head": s[:64],
+        "family": family, "nletters": nletters, "alpha_pure": alpha_pure,
     }
 
 
@@ -603,6 +661,11 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
     stats.setdefault("per_depth", {})
     stats.setdefault("transforms_run", 0)
     beam = max(1, int(getattr(ctx, "beam_width", 3)))
+    # Phase 6: deterministic node/iteration budget. When set, it (not the
+    # wall-clock deadline) governs termination so identical inputs consume
+    # identical units regardless of -j/J/-j4 or machine load. The wall-clock
+    # deadline stays as a hard safety ceiling.
+    _budget = getattr(ctx, "node_budget", None)
     try:
         id_text = data.decode("utf-8", "replace")
         id_match = ctx.flag_regex.search(id_text) if len(data) <= 100_000 else None
@@ -641,7 +704,8 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
     }
     _post_exact = 0
     best_so_far = None
-    while heap and not ctx.expired():
+    while heap and not ctx.expired() and (
+            _budget is None or stats["nodes_expanded"] < _budget):
         if ctx.exact_found and _post_exact >= 8:
             break
         _, _, blob, chain, chain_prior, depth = heapq.heappop(heap)
@@ -684,6 +748,13 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                     heapq.heappush(heap, (-priority, serial, newdata,
                                           chain + tuple(names), priority, depth + 1))
         fp = fingerprint(blob)
+        if depth == 0 and "structure" not in stats:
+            # Phase 6 structure label / progress: exposed in --json search_stats
+            # and the UI, so operators see which family pruned the search.
+            stats["structure"] = {
+                "family": fp["family"], "nletters": fp["nletters"],
+                "alpha_pure": fp["alpha_pure"], "ic": round(fp["ic"], 4),
+            }
         input_flag = bool(ctx.flag_regex.search(blob.decode("latin-1")))
         input_plaus = flag_plausibility(blob.decode("latin-1")) if input_flag else 0.0
         encoding_classes = {
@@ -774,7 +845,12 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                 prior = float(item.matches(fp))
             except Exception:
                 prior = 0.0
-            if prior > 0:
+            if prior > 0 and _applicable(item.name, fp, chain):
+                # Phase 6 learning: a frozen, read-only snapshot supplies
+                # deterministic per-method prior boosts (smart mode only).
+                if _budget is not None and ctx.learned_prior:
+                    _base = item.name.split("(", 1)[0].lower().strip()
+                    prior = min(1.0, prior + ctx.learned_prior.get(_base, 0.0))
                 jobs.append((prior, item))
         jobs.sort(key=lambda x: -x[0])
         # Budget-aware scheduling: a low-prior solver can be the only one able
@@ -823,6 +899,11 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                 # low-prior solvers still get a slice of the global budget.
                 prev_deadline = ctx.deadline
                 _item_start = time.monotonic()
+                # Wall-clock per-solver slicing (default path). In smart mode
+                # the node/iteration budget is the binding termination meter;
+                # the per-solver slice stays only as a hard time ceiling, and
+                # the in-process path is capped to the same 128 yields as a
+                # pool worker so -j1/-j4 produce the same candidate sets.
                 if item.name == "dlp-composite-smooth" and re.search(
                         r"(?m)^\s*dlp_secret\s*=\s*1\s*$",
                         fp.get("_text", "")) and not ctx.expired():
@@ -853,7 +934,18 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                             ctx.failures.append(f"{item.name}: {err}")
                         yielded = iter(presolved)
                     else:
-                        yielded = item.solve(blob, ctx)
+                        _gen = item.solve(blob, ctx)
+                        if _budget is not None:
+                            # Match the pool worker's 128-yield cap so -j1 and
+                            # -j4 produce identical per-solver candidate sets.
+                            def _capped(it, limit=128):
+                                for _i, _x in enumerate(it):
+                                    if _i >= limit:
+                                        break
+                                    yield _x
+                            yielded = _capped(_gen)
+                        else:
+                            yielded = _gen
                 finally:
                     ctx.deadline = prev_deadline
                     ctx.solver_times[item.name] = (
@@ -870,6 +962,7 @@ def search(data: bytes, ctx: Context, top: int = 5, max_depth: int = 6) -> Searc
                     if ctx.expired():
                         now = time.monotonic()
                         if (not _extended and _n_yields > 0
+                                and _budget is None  # smart mode: no load-sensitive extension
                                 and now >= _slice_end - 2.0 * ctx.speed
                                 and prev_deadline - now > 4.0 * ctx.speed):
                             ctx.deadline = min(prev_deadline, now + 4.0 * ctx.speed)

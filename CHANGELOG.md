@@ -4,6 +4,40 @@ All notable changes to AutoCrypt are recorded here. Format: version → notable
 changes. See `PROGRESS.md` for detailed work logs and `LOGS.md` for the
 chronological session record.
 
+## 0.11.11 (unreleased) — Phase 6: smart node-budget search, structural pruning, learning, benchmark
+
+- **Deterministic node/iteration budget (`--node-budget` / `--smart`)**:
+  new opt-in smart mode where the search terminates by node count, not wall-clock,
+  so identical inputs consume identical units across `-j1`/`-j4`. Worker hash
+  seeds are pinned (`PYTHONHASHSEED=0`), the in-process path is capped at the
+  same 128 yields as a pool worker, and the load-sensitive adaptive slice
+  extension is disabled in smart mode. The wall-clock deadline stays only as a
+  hard safety ceiling.
+- **Structural family gate + structure labels**: `fingerprint()` now derives a
+  conservative `family` (`hash` / `compression` / `encoding` / `substitution` /
+  `polyalphabetic` / `ambiguous-text`), `nletters`, and `alpha_pure`. Job
+  collection uses a new `_applicable()` gate (before pool submission) so a
+  hash-labeled blob no longer burns classical letter-cipher/transposition
+  workers, and monoalphabetic substitution is pruned only on large alpha-pure
+  low-IC samples. The root structure label is surfaced in `search_stats`.
+- **Learning from a frozen snapshot (`--solved-chains` / `solved_chains.jsonl`)**:
+  new `autocrypt/learning.py` reads a read-only history snapshot and derives
+  deterministic per-method prior boosts (pure function of family + snapshot
+  digest + fixed seed; never writes during a run; pinned ordering/format).
+- **Benchmark generator `gen_chains.py`**: chained-transform problem generator
+  with fixed seeds — `TRAIN` (`solved_chains_train.jsonl`) and `HOLDOUT`
+  (`solved_chains_holdout.jsonl`) splits of 500 each, plus an aggregate-only
+  `report` mode (solve rate by depth / first step / plaintext-type; individual
+  failures are never printed) to catch overfitting (TRAIN ≫ HOLDOUT).
+- **CLI/UI**: `--node-budget N`, `--smart`, `--solved-chains` flags; UI menu
+  entry `7. Smart search (node budget)` (appended after Quit, branches 1–6
+  byte-identical) forwards `node_budget` from Settings.
+- Default (non-smart) behavior is unchanged: `--node-budget` is strictly opt-in
+  with default `None`, and no new solvers are registered globally.
+- Tests: `tests/test_smart.py` (family gate, determinism, budget-loop binding,
+  learning reproducibility, benchmark smoke). Full regression gates green
+  (`run_tests.sh`, `test_matrix.py`, `run_all_tests.sh`).
+
 ## 0.11.10 (unreleased) — Phase 2 --profile scoring; Phase 3 known-key mode; Phase 1 unsolved frontier
 
 - **Scoring profiles (`--profile` / `solve_data(profile=...)`)**: new profile block in

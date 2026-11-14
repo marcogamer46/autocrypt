@@ -53,13 +53,37 @@ def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=200,
                known_plaintext="", wordlist_path="", params="", jobs=None,
                progress_callback=None, flag_format_explicit=False, verbose=False,
                strict=False, fast=False, deep=False, max_depth=5,
-               failure_log_path=None, beam_width=None, key="", profile="flag"):
-    """Run the existing fingerprint/search pipeline for both CLI and UI."""
+               failure_log_path=None, beam_width=None, key="", profile="flag",
+               node_budget=None, solved_chains=""):
+    """Run the existing fingerprint/search pipeline for both CLI and UI.
+
+    ``node_budget`` enables Phase 6 smart mode: termination is governed by a
+    deterministic node/iteration budget (not wall-clock), so ``-j1`` and
+    ``-j4`` give bit-identical results. ``solved_chains`` is a read-only
+    learning snapshot (solved_chains.jsonl) that boosts priors deterministically.
+    """
     wordlist = _load_wordlist(wordlist_path)
     fp = fingerprint(data)
     if jobs is None:
         jobs = min(os.cpu_count() or 1, 8)
     jobs = max(1, int(jobs))
+    _smart = node_budget is not None
+    if _smart:
+        # Smart mode: pin worker hash seeds so set/dict iteration in solvers is
+        # reproducible across -j1/-j4 (PYTHONHASHSEED is read at interpreter
+        # start, so set it before the pool spawns). The node budget is the
+        # binding termination meter; the wall-clock deadline stays as a hard
+        # safety ceiling so a pathological solver can never hang the run.
+        os.environ["PYTHONHASHSEED"] = "0"
+    deadline = time.monotonic() + timeout
+    learned = {}
+    if _smart:
+        try:
+            from autocrypt.learning import load_snapshot, learned_prior_map
+            recs = load_snapshot(solved_chains or "solved_chains.jsonl")
+            learned = learned_prior_map(recs, fp.get("family", "unknown"))
+        except Exception:
+            learned = {}
     # --fast: 50% shorter per-solver slices and skip the costly brute-force
     # solvers; --deep: 2x per-solver slices and a deeper search.
     speed = 0.5 if fast else (2.0 if deep else 1.0)
@@ -71,7 +95,7 @@ def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=200,
     if deep:
         max_depth = 9
     from autocrypt.scoring import get_assessor
-    ctx = Context(deadline=time.monotonic() + timeout,
+    ctx = Context(deadline=deadline,
                   flag_regex=re.compile(flag_format, re.DOTALL),
                   flag_regex_explicit=flag_format_explicit,
                   known_plaintext=known_plaintext, wordlist=wordlist,
@@ -80,7 +104,7 @@ def solve_data(data, *, flag_format=r"\w{1,40}\{.*?\}", timeout=20.0, top=200,
                   strict=strict or bool(os.environ.get("AUTOCRYPT_STRICT")),
                   speed=speed, heavy_names=heavy,
                   beam_width=beam_width if beam_width is not None else 64,
-                  key=key)
+                  key=key, node_budget=node_budget, learned_prior=learned)
     ctx.search_t0 = time.monotonic()
     pool = None
     if jobs > 1 and data and len(data) >= 128:
@@ -223,6 +247,14 @@ def build_parser():
                          "(structural/code), readable (lenient), none (no language scoring)")
     p.add_argument("--key", default="",
                    help="known cipher key (e.g. a Vigenère keyword); blank = crack automatically")
+    p.add_argument("--node-budget", type=int, default=None,
+                   help="Phase 6 smart mode: cap search node expansions (deterministic "
+                        "across -j1/-j4); setting this enables smart mode")
+    p.add_argument("--smart", action="store_true",
+                   help="alias for --node-budget 2500 (smart search preset)")
+    p.add_argument("--solved-chains", metavar="PATH", default="",
+                   help="Phase 6 learning snapshot (solved_chains.jsonl), read-only; "
+                        "boosts solver priors deterministically in smart mode")
     p.add_argument("--failures", metavar="PATH",
                    help="JSONL log of undecoded inputs (default: failures.jsonl); also read by --replay")
     p.add_argument("--replay", action="store_true",
@@ -339,6 +371,9 @@ def main(argv=None):
             beam_width=args.beam_width,
             key=args.key,
             profile=args.profile,
+            node_budget=(args.node_budget if args.node_budget is not None
+                         else (2500 if args.smart else None)),
+            solved_chains=args.solved_chains,
         )
         if ctx.bug_log:
             for bname, typ, tb in ctx.bug_log:
